@@ -576,7 +576,7 @@ stretching:[{id:U.uid(),type:'面部按摩',duration:10,date:yd},{id:U.uid(),typ
 schedule:[{id:U.uid(),title:'量化研究',date:t,startTime:'14:00',endTime:'15:30',category:'quant',note:'策略回测'},{id:U.uid(),title:'健身房',date:t,startTime:'18:00',endTime:'19:00',category:'fitness',note:'力量训练'},{id:U.uid(),title:'晚间学习',date:t,startTime:'20:00',endTime:'21:00',category:'study',note:'复习今日笔记'}],
 todos:[{id:U.uid(),title:'更新简历',priority:'high',done:false,dueDate:t,category:'求职'},{id:U.uid(),title:'完成今日作业',priority:'high',done:false,dueDate:t,category:'学业'},{id:U.uid(),title:'数据分析练习',priority:'mid',done:false,dueDate:t,category:'quant'},{id:U.uid(),title:'整理本周开销',priority:'low',done:true,dueDate:yd,category:'生活',completedDate:yd}],
 water:[{id:U.uid(),amount:500,date:t},{id:U.uid(),amount:350,date:t}],
-aiConfig:{apiUrl:'',apiKey:'',model:'gpt-4o-mini'},chatHistory:[],goals:[],settings:{theme:'light'},cloudSync:{url:'',key:'',enabled:false}}}
+aiConfig:{provider:'openai',apiUrl:'',apiKey:'',model:'gpt-4o-mini'},chatHistory:[],goals:[],settings:{theme:'light'},cloudSync:{url:'',key:'',enabled:false}}}
 };
 const Chart={
 donut(data,w,h){const total=data.reduce((s,d)=>s+d.value,0)||1;const r=60,cx=70,cy=70,circ=2*Math.PI*r;let off=0;let s=`<svg class="donut" viewBox="0 0 140 140"><circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--surface-3)" stroke-width="14"/>`;data.forEach(d=>{const len=d.value/total*circ;s+=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${d.color}" stroke-width="14" stroke-dasharray="${len} ${circ-len}" stroke-dashoffset="${-off}" transform="rotate(-90 ${cx} ${cy})"/>`;off+=len});return s+'</svg>'},
@@ -643,6 +643,7 @@ agentBar(){return`<div class="agent-trigger" onclick="UI.agent.toggleSheet()">${
     _renderMsgs(){const b=document.getElementById('agent-msgs');if(!b)return;const d=Store.data;const hist=d.chatHistory||[];let html='';if(!hist.length){html+=`<div class="chat-msg sys">还没有消息 · 试试下方建议</div>`}
     hist.forEach(m=>{
       if(m.role==='system-skip')return;
+      if(m.role==='plan'){html+=M.chat._planCard(m);return}
       if(m.role==='user'){html+=`<div class="chat-msg user">${U.esc(m.content)}</div>`;return}
       if(m.role==='parsed'){
         const p=m.parsed||{};
@@ -1148,12 +1149,145 @@ UI.modal(h)},
 _complete(id){const g=Store.data.goals.find(x=>x.id===id);if(!g)return;g.status='done';if(g.milestones)g.milestones.forEach(m=>m.done=true);Store.save();UI.closeModal();this.render();UI.toast('恭喜达成目标！','success')},
 del(id){UI.confirm('删除这个目标？关联的待办不会被删除。',()=>{Store.data.goals=Store.data.goals.filter(x=>x.id!==id);Store.save();this.render();UI.toast('已删除','info')})}
 };
+/* ===== Skill 插件系统（可插拔 Agent 工具层）=====
+   每个 Skill = {id,name,desc,tools:[{name,desc,params(JSON Schema),handler}]}
+   未来外部技能包（股票/邮件/远端下载）只需 Skills.register() 即可挂载 */
+const Skills={
+  registry:[],
+  register(s){if(s&&s.id&&!this.registry.find(x=>x.id===s.id))this.registry.push(s)},
+  list(){return this.registry},
+  allTools(){const out=[];this.registry.forEach(s=>(s.tools||[]).forEach(t=>out.push({id:s.id+'__'+t.name,desc:t.desc,params:t.params,readOnly:!!t.readOnly})));return out},
+  dispatch(fn,args){const i=fn.indexOf('__');if(i<0)return{ok:false,error:'工具名无效'};const sid=fn.slice(0,i),tn=fn.slice(i+2);const s=this.registry.find(x=>x.id===sid);if(!s)return{ok:false,error:'skill「'+sid+'」未注册'};const t=(s.tools||[]).find(x=>x.name===tn);if(!t)return{ok:false,error:'工具「'+tn+'」不存在'};try{const r=t.handler(args||{});Store.save();return{ok:true,result:r==null?'ok':r}}catch(e){return{ok:false,error:e.message}}},
+  openaiTools(){return this.allTools().map(t=>({type:'function',function:{name:t.id,description:t.desc,parameters:t.params}}))},
+  anthropicTools(){return this.allTools().map(t=>({name:t.id,description:t.desc,input_schema:t.params}))}
+};
+
+/* 内置技能：生活工作台全模块读写 */
+Skills.register({
+  id:'life',name:'生活工作台',desc:'目标/健身/养生/日程/待办/记账 全模块读写',
+  tools:[
+  {name:'query_summary',desc:'读取用户数据摘要（资料、今日饮食/运动/饮水/睡眠/支出、最新体重、进行中目标、未完成待办）。做规划前先调用它了解现状',readOnly:true,
+    params:{type:'object',properties:{}},
+    handler(){const d=Store.data,t=U.today();return JSON.stringify({today:t,profile:{height:d.profile.height,age:d.profile.age,targetWeight:d.profile.targetWeight,dailyCalorieTarget:d.profile.dailyCalorieTarget,dailyBudget:d.profile.dailyBudget,targetWater:d.profile.targetWater},latestWeight:d.weights.length?d.weights[d.weights.length-1].weight:null,todayMeals:d.meals.filter(m=>m.date===t).map(m=>({name:m.name,cal:m.calories,type:m.mealType})),todayExercise:d.exerciseLog.filter(e=>e.date===t).map(e=>({name:e.name,min:e.duration})),todayWaterMl:d.water.filter(w=>w.date===t).reduce((s,w)=>s+w.amount,0),lastSleep:d.sleep.find(s=>s.date===t)||null,activeGoals:(d.goals||[]).filter(g=>g.status!=='done').map(g=>({title:g.title,type:g.type,target:g.target,unit:g.unit,endDate:g.endDate})),pendingTodoCount:d.todos.filter(x=>!x.done).length,pendingTodos:d.todos.filter(x=>!x.done).slice(0,10).map(x=>({title:x.title,due:x.dueDate})),totalAssets:d.investments.reduce((s,i)=>s+(i.amount||0),0)})}},
+  {name:'create_goal',desc:'创建目标，自动生成里程碑和配套待办。type: weight=减脂(自动从体重记录追踪) / saving=储蓄(从资产总额追踪) / habit=习惯(从打卡天数追踪) / custom=自定义',
+    params:{type:'object',properties:{title:{type:'string'},type:{type:'string',enum:['weight','saving','habit','custom']},target:{type:'number',description:'weight=目标体重kg、saving=金额、habit=天数、custom=数量'},endDate:{type:'string',description:'YYYY-MM-DD，默认90天后'},habitField:{type:'string',enum:['stretching','beauty','sleep'],description:'habit类型必填'},unit:{type:'string',description:'custom类型的单位'}},required:['title','type','target']},
+    handler(a){const g={id:U.uid(),title:a.title,type:a.type,target:+a.target||0,unit:a.unit||(a.type==='weight'?'kg':a.type==='habit'?'天':''),startDate:U.today(),endDate:a.endDate||M.goals._addDays(U.today(),90),status:'active',milestones:[]};if(a.type==='weight')g.startVal=Store.data.weights.length?Store.data.weights[Store.data.weights.length-1].weight:0;if(a.type==='habit')g.habitField=a.habitField||'stretching';g.milestones=M.goals._decompose(g);const todos=M.goals._genTodos(g);Store.data.goals.push(g);if(todos.length)Store.data.todos.push(...todos);return{goalId:g.id,milestones:g.milestones.length,autoTodos:todos.length}}},
+  {name:'add_weight',desc:'记录一次体重(kg)',
+    params:{type:'object',properties:{weight:{type:'number'},date:{type:'string',description:'YYYY-MM-DD，默认今天'}},required:['weight']},
+    handler(a){Store.data.weights.push({id:U.uid(),date:a.date||U.today(),weight:+a.weight})}},
+  {name:'add_meal',desc:'记录饮食',
+    params:{type:'object',properties:{name:{type:'string'},calories:{type:'number'},mealType:{type:'string',enum:['breakfast','lunch','dinner','snack']},date:{type:'string'},note:{type:'string'}},required:['name']},
+    handler(a){Store.data.meals.push({id:U.uid(),name:a.name,calories:+a.calories||300,mealType:a.mealType||'lunch',date:a.date||U.today(),note:a.note||''})}},
+  {name:'add_exercise',desc:'记录运动',
+    params:{type:'object',properties:{name:{type:'string'},duration:{type:'number',description:'分钟'},calories:{type:'number'},date:{type:'string'}},required:['name']},
+    handler(a){Store.data.exerciseLog.push({id:U.uid(),name:a.name,duration:+a.duration||30,calories:+a.calories||0,date:a.date||U.today()})}},
+  {name:'add_water',desc:'记录饮水(ml)',
+    params:{type:'object',properties:{amount:{type:'number'},note:{type:'string'},date:{type:'string'}},required:['amount']},
+    handler(a){Store.data.water.push({id:U.uid(),amount:+a.amount||250,date:a.date||U.today(),note:a.note||''})}},
+  {name:'add_sleep',desc:'记录睡眠',
+    params:{type:'object',properties:{hours:{type:'number'},quality:{type:'number',description:'1-5'},bedtime:{type:'string'},wakeTime:{type:'string'},date:{type:'string'}},required:['hours']},
+    handler(a){const d=a.date||U.today();const i=Store.data.sleep.findIndex(x=>x.date===d);const r={id:i>=0?Store.data.sleep[i].id:U.uid(),hours:+a.hours,quality:+a.quality||3,bedtime:a.bedtime||'23:30',wakeTime:a.wakeTime||'07:00',date:d};if(i>=0)Store.data.sleep[i]=r;else Store.data.sleep.push(r)}},
+  {name:'add_stretch',desc:'记录拉伸/按摩',
+    params:{type:'object',properties:{type:{type:'string'},duration:{type:'number'},date:{type:'string'}},required:['duration']},
+    handler(a){Store.data.stretching.push({id:U.uid(),type:a.type||'拉伸',duration:+a.duration||15,date:a.date||U.today()})}},
+  {name:'add_beauty',desc:'记录护肤',
+    params:{type:'object',properties:{type:{type:'string'},date:{type:'string'}},
+    required:[]},
+    handler(a){Store.data.beauty.push({id:U.uid(),type:a.type||'护肤',date:a.date||U.today()})}},
+  {name:'add_meditation',desc:'记录冥想',
+    params:{type:'object',properties:{duration:{type:'number'},type:{type:'string'},date:{type:'string'}},required:['duration']},
+    handler(a){Store.data.meditation=Store.data.meditation||[];Store.data.meditation.push({id:U.uid(),duration:+a.duration||15,type:a.type||'正念冥想',date:a.date||U.today()})}},
+  {name:'add_todo',desc:'创建待办',
+    params:{type:'object',properties:{title:{type:'string'},priority:{type:'string',enum:['high','mid','low']},dueDate:{type:'string',description:'YYYY-MM-DD'},category:{type:'string'}},required:['title']},
+    handler(a){Store.data.todos.push({id:U.uid(),title:a.title,priority:a.priority||'mid',done:false,dueDate:a.dueDate||U.today(),category:a.category||''})}},
+  {name:'add_schedule',desc:'创建日程/提醒，支持每日或每周重复',
+    params:{type:'object',properties:{title:{type:'string'},date:{type:'string',description:'首次日期 YYYY-MM-DD'},startTime:{type:'string',description:'HH:MM'},endTime:{type:'string'},category:{type:'string',enum:['life','study','work','health','finance']},note:{type:'string'},rrule:{type:'string',enum:['none','daily','weekly'],description:'none=单次(默认) daily=每天 weekly=每周'},rruleDays:{type:'array',items:{type:'string',enum:['1','2','3','4','5','6','7']},description:'weekly时生效，1=周一…7=周日，如["1","3","5"]'}},required:['title','startTime']},
+    handler(a){Store.data.schedule.push({id:U.uid(),title:a.title,date:a.date||U.today(),startTime:a.startTime||'09:00',endTime:a.endTime||'',category:a.category||'life',note:a.note||'',rrule:a.rrule&&a.rrule!=='none'?a.rrule:'',rruleDays:a.rruleDays||[],rruleUntil:''})}},
+  {name:'add_transaction',desc:'记账（收入/支出）',
+    params:{type:'object',properties:{type:{type:'string',enum:['expense','income']},amount:{type:'number'},category:{type:'string'},note:{type:'string'},date:{type:'string'}},required:['type','amount']},
+    handler(a){Store.data.transactions.push({id:U.uid(),date:a.date||U.today(),type:a.type,amount:+a.amount,category:a.category||'其他',note:a.note||''})}}
+  ]
+});
+
+/* ===== Agent 编排层：意图路由 + LLM Function Calling =====
+   简单意图走本地规则（0 token）；规划类意图走 tools 协议（schema 不进 system prompt） */
+const Agent={
+  PLAN_RE:/减.{0,4}(重|斤|kg)|增(重|肌)|瘦身|减肥|计划|规划|拆解|帮我安排|目标|存钱|攒钱|攒下|养成.{0,8}习惯|提醒我|监督我|自律|坚持/,
+  isPlanning(t){return this.PLAN_RE.test(t||'')},
+  _refreshMods(){['dashboard','goals','todo','schedule','fitness','wellness','finance'].forEach(k=>{try{const el=document.getElementById('m-'+k);if(el&&M[k]&&typeof M[k].render==='function')M[k].render()}catch(e){}})},
+  async plan(text,opts){
+    opts=opts||{};const d=Store.data,cfg=d.aiConfig||{},hist=d.chatHistory||(d.chatHistory=[]);
+    const lk='plan-'+Date.now();hist.push({role:'assistant',content:'🧠 正在规划（调用工具中）…',_lk:lk,ts:Date.now()});Store.save();M.chat._refreshChats();
+    const sys='你是「枢」，用户的生活规划 agent。今天是 '+U.today()+'。工作流程：1) 先调用 query_summary 了解用户现状；2) 根据需求调用多个工具完成跨模块拆解（例：用户要减重15斤 → create_goal(weight) + add_weight(基线) + add_todo(若干具体待办) + add_schedule(每周重复运动提醒) 组合）；3) 结束时用一两句中文总结计划。写操作会先经用户确认再执行，你只管返回工具调用。重复提醒用 add_schedule 的 rrule/rruleDays 参数。';
+    const msgs=[{role:'system',content:sys},{role:'user',content:text}];
+    const actions=[];let reply='';
+    try{
+      for(let round=0;round<6;round++){
+        const r=await this.callLLM(msgs);
+        if(r&&r.toolCalls&&r.toolCalls.length){
+          msgs.push(r.rawAssistant);
+          for(const tc of r.toolCalls){
+            let args={};try{args=JSON.parse(tc.argsJson||'{}')}catch(e){}
+            const tool=Skills.allTools().find(x=>x.id===tc.name);
+            if(tool&&tool.readOnly){const res=Skills.dispatch(tc.name,args);msgs.push(this._toolMsg(tc.id,String(res.ok?res.result:res.error)))}
+            else{actions.push({tool:tc.name,args});msgs.push(this._toolMsg(tc.id,'已加入执行计划，等待用户确认'))}
+          }
+        }else{reply=(r&&r.content)||'已完成规划。';break}
+      }
+      const lm=hist.find(m=>m._lk===lk);if(lm)lm.role='system-skip';
+      hist.push({role:'plan',id:U.uid(),reply,actions,status:actions.length?'pending':'empty',ts:Date.now()});
+      Store.save();M.chat._refreshChats();
+    }catch(e){
+      const lm=hist.find(m=>m._lk===lk);if(lm){lm.content='⚠ 规划失败：'+e.message+'（已回退本地规则识别）';delete lm._lk}
+      Store.save();M.chat._refreshChats();
+      M.chat.handleAgent(text,{...opts,skipPlan:true});
+    }
+  },
+  _toolMsg(id,content){const cfg=Store.data.aiConfig||{};if(cfg.provider==='anthropic'){return{role:'user',content:[{type:'tool_result',tool_use_id:id,content:String(content)}]}}return{role:'tool',tool_call_id:id,content:String(content)}},
+  async callLLM(msgs){const cfg=Store.data.aiConfig||{};if(cfg.provider==='anthropic')return this._anthropic(msgs,cfg);return this._openai(msgs,cfg)},
+  async _openai(msgs,cfg){
+    const r=await fetch(cfg.apiUrl,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(cfg.apiKey||'')},body:JSON.stringify({model:cfg.model||'gpt-4o-mini',messages:msgs,tools:Skills.openaiTools(),tool_choice:'auto',max_tokens:1500})});
+    if(!r.ok)throw new Error('API '+r.status+' '+(await r.text()).slice(0,80));
+    const j=await r.json();const m=j.choices[0].message;
+    const toolCalls=(m.tool_calls||[]).map(tc=>({id:tc.id,name:tc.function.name,argsJson:tc.function.arguments}));
+    return{content:m.content,toolCalls,rawAssistant:m};
+  },
+  async _anthropic(msgs,cfg){
+    const sys=(msgs.find(m=>m.role==='system')||{}).content||'';
+    const conv=[];msgs.filter(m=>m.role!=='system').forEach(m=>{
+      if(m.role==='tool'){conv.push({role:'user',content:[{type:'tool_result',tool_use_id:m.tool_call_id,content:String(m.content)}]})}
+      else if(m.role==='assistant'&&m.tool_calls){const blocks=[];if(m.content)blocks.push({type:'text',text:m.content});m.tool_calls.forEach(tc=>{let input={};try{input=JSON.parse(tc.function.arguments||'{}')}catch(e){}blocks.push({type:'tool_use',id:tc.id,name:tc.function.name,input})});conv.push({role:'assistant',content:blocks})}
+      else conv.push({role:m.role,content:[{type:'text',text:String(m.content)}]});
+    });
+    const merged=[];conv.forEach(m=>{const last=merged[merged.length-1];if(last&&last.role===m.role&&Array.isArray(last.content)&&Array.isArray(m.content))last.content=last.content.concat(m.content);else merged.push(m)});
+    const url=(cfg.apiUrl&&cfg.apiUrl.indexOf('/messages')>=0)?cfg.apiUrl:'https://api.anthropic.com/v1/messages';
+    const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','x-api-key':cfg.apiKey||'','anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:cfg.model||'claude-sonnet-4-20250514',system:sys,tools:Skills.anthropicTools(),messages:merged,max_tokens:1500})});
+    if(!r.ok)throw new Error('API '+r.status+' '+(await r.text()).slice(0,80));
+    const j=await r.json();
+    const blocks=j.content||[];const text=blocks.filter(b=>b.type==='text').map(b=>b.text).join('');
+    const toolCalls=blocks.filter(b=>b.type==='tool_use').map(b=>({id:b.id,name:b.name,argsJson:JSON.stringify(b.input||{})}));
+    const rawAssistant={role:'assistant',content:text,tool_calls:toolCalls.map(tc=>({id:tc.id,function:{name:tc.name,arguments:tc.argsJson}}))};
+    return{content:text,toolCalls,rawAssistant};
+  },
+  async executePlan(id){
+    const d=Store.data;const hist=d.chatHistory||[];const p=hist.find(m=>m.id===id&&m.role==='plan');if(!p||p.status!=='pending')return;
+    let ok=0,fail=0;const results=[];
+    for(const a of p.actions||[]){const r=Skills.dispatch(a.tool,a.args);if(r.ok){ok++;results.push('✅ '+M.chat.toolLabel(a.tool))}else{fail++;results.push('❌ '+M.chat.toolLabel(a.tool)+'：'+r.error)}}
+    p.status='done';p.result={ok,fail,results};p.reply=p.reply||'';Store.save();
+    this._refreshMods();M.chat._refreshChats();
+    UI.toast(fail?('执行完成：'+ok+' 成功 / '+fail+' 失败'):'计划已全部执行（'+ok+' 项）',fail?'warn':'success');
+  },
+  dropPlan(id){const hist=Store.data.chatHistory||[];const p=hist.find(m=>m.id===id&&m.role==='plan');if(p){p.status='dropped';Store.save();M.chat._refreshChats();UI.toast('已取消该计划','info')}}
+};
+
 M.chat={
 genContext(){const t=U.today(),d=Store.data;let c=`今日数据摘要（${t}）：\n`;const ex=d.transactions.filter(x=>x.date===t&&x.type==='expense');if(ex.length)c+=`- 支出：${U.money(ex.reduce((s,e)=>s+e.amount,0))}（${ex.length}笔）\n`;const ms=d.meals.filter(m=>m.date===t);if(ms.length)c+=`- 摄入：${ms.reduce((s,m)=>s+m.calories,0)}kcal\n`;const el=d.exerciseLog.filter(e=>e.date===t);if(el.length)c+=`- 运动：${el.length}项，消耗${el.reduce((s,e)=>s+(e.calories||0),0)}kcal\n`;const sl=d.sleep.find(s=>s.date===t);if(sl)c+=`- 睡眠：${sl.hours}h，质量${sl.quality}/5\n`;const td=d.todos.filter(x=>!x.done);if(td.length)c+=`- 待办：${td.length}项未完成\n`;return c||'暂无今日数据'},
 
 /* hybrid 识别：默认规则；如配置了 LLM，且置信度低，则二次请求 LLM */
 async handleAgent(text,opts){
   opts=opts||{};
+  const cfg0=Store.data.aiConfig||{};
+  if(!opts.skipPlan&&cfg0.apiKey&&Agent.isPlanning(text)){Agent.plan(text,opts);return}
   const parsed=U.agentParse(text);
   if(!parsed){return}
   const d=Store.data;
@@ -1190,6 +1324,16 @@ _modalLowConfidence(p){
   UI.modal(`<div class="modal-head"><div class="modal-title">我没听明白</div><button class="modal-close" onclick="UI.closeModal()">${I.close}</button></div><div style="font-size:.88rem;line-height:1.7;white-space:pre-wrap;color:var(--text-2)">${U.esc(p.note||'请描述更具体些')}</div><div style="margin-top:14px"><div style="font-size:.78rem;color:var(--text-3);margin-bottom:6px">或者直接选：</div><div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px"><button class="btn btn-ghost" onclick="UI.closeModal();M.chat.quickCmd('meal')">记饮食</button><button class="btn btn-ghost" onclick="UI.closeModal();M.chat.quickCmd('exercise')">记运动</button><button class="btn btn-ghost" onclick="UI.closeModal();M.chat.quickCmd('water')">记饮水</button><button class="btn btn-ghost" onclick="UI.closeModal();M.chat.quickCmd('sleep')">记睡眠</button><button class="btn btn-ghost" onclick="UI.closeModal();M.chat.quickCmd('schedule')">建日程</button><button class="btn btn-ghost" onclick="UI.closeModal();M.chat.quickCmd('todo')">建待办</button></div></div>`);
 },
 quickCmd(t){UI.agent.openSheet();setTimeout(()=>{const i=document.getElementById('agent-sheet-input');if(i){i.value='_'+t;UI.toast('选择类型已就位，请补充细节','info')}},50)},
+
+_refreshChats(){if(UI.agent._renderMsgs)UI.agent._renderMsgs();const mc=document.getElementById('chat-msgs');if(mc){mc.innerHTML=this._renderChatMsgs();mc.scrollTop=mc.scrollHeight}},
+toolLabel(fn){const map={'life__create_goal':'🎯 创建目标','life__add_weight':'⚖️ 记录体重','life__add_meal':'🍱 记录饮食','life__add_exercise':'🏃 记录运动','life__add_water':'💧 记录饮水','life__add_sleep':'💤 记录睡眠','life__add_stretch':'🧘 拉伸/按摩','life__add_beauty':'✨ 护肤','life__add_meditation':'🌿 冥想','life__add_todo':'✓ 创建待办','life__add_schedule':'📅 创建日程','life__add_transaction':'💰 记账'};return map[fn]||fn},
+_planCard(m){
+  if(m.status==='done'){const r=m.result||{};return `${m.reply?`<div class="chat-msg bot">${U.esc(m.reply)}</div>`:''}<div class="chat-msg sys">✅ 计划已执行 · ${(r.results||[]).join(' · ')}</div>`}
+  if(m.status==='dropped')return `<div class="chat-msg sys">已取消该计划</div>`;
+  if(m.status==='empty')return `<div class="chat-msg bot">${U.esc(m.reply||'未产生可执行的操作')}</div>`;
+  const acts=(m.actions||[]).map(a=>{const pv=Object.entries(a.args||{}).slice(0,3).map(([k,v])=>k+'='+String(v)).join(' · ');return `<div style="padding:3px 0;font-size:.78rem">• ${this.toolLabel(a.tool)}${pv?` <span style="color:var(--text-3)">${U.esc(pv)}</span>`:''}</div>`}).join('');
+  return `<div class="chat-msg bot"><b>🧠 执行计划（${(m.actions||[]).length} 项操作）</b><div style="margin-top:4px">${acts}</div>${m.reply?`<div style="margin-top:6px;font-size:.8rem;color:var(--text-2);line-height:1.6">${U.esc(m.reply)}</div>`:''}<div style="display:flex;gap:6px;margin-top:8px"><button class="btn btn-primary btn-sm" onclick="Agent.executePlan('${m.id}')">确认执行</button><button class="btn btn-ghost btn-sm" onclick="Agent.dropPlan('${m.id}')">取消</button></div></div>`;
+},
 
 applyAgent(idx){const d=Store.data;const hist=d.chatHistory;const msg=hist.find(m=>m.idx===idx&&m.role==='parsed');if(!msg)return;
   const p=msg.parsed;
@@ -1241,6 +1385,7 @@ dropPending(idx){const hist=Store.data.chatHistory;const i=hist.findIndex(m=>m.i
 _renderChatMsgs(){const d=Store.data;const msgs=d.chatHistory||[];let html='';if(!msgs.length)html='<div class="empty" style="padding:40px 16px"><div style="font-size:.9rem">聊天记录将在这里展示</div></div>';
   msgs.forEach(m=>{
     if(m.role==='system-skip')return;
+    if(m.role==='plan'){html+=this._planCard(m);return}
     if(m.role==='user'){html+=`<div class="chat-msg user">${U.esc(m.content||'')}</div>`;return}
     if(m.role==='parsed'){
       const p=m.parsed||{};
@@ -1266,7 +1411,7 @@ _renderChatMsgs(){const d=Store.data;const msgs=d.chatHistory||[];let html='';if
 },
 
 render(){const d=Store.data;const cfg=d.aiConfig;const msgs=d.chatHistory||[];
-  document.getElementById('m-chat').innerHTML=`<div class="page-header"><div><div class="page-title">AI 对话</div><div class="page-sub">${cfg.apiKey?'已配置API · LLM 解析已启用':'未配置API — 启用规则识别（点击右上角 ⚙ 配置）'}</div></div><div style="display:flex;gap:6px"><button class="btn btn-ghost btn-sm" onclick="UI.agent.openSheet()">浮动聊天</button><button class="btn btn-ghost btn-sm" onclick="M.chat.showConfig()">设置</button></div></div>
+  document.getElementById('m-chat').innerHTML=`<div class="page-header"><div><div class="page-title">AI 对话</div><div class="page-sub">${cfg.apiKey?('已配置 '+(cfg.provider==='anthropic'?'Claude':'OpenAI兼容')+' · 简单记录走本地规则，规划走 Function Calling'):'未配置API — 简单记录可用（本地规则），规划需配置（点右上角设置）'}</div></div><div style="display:flex;gap:6px"><button class="btn btn-ghost btn-sm" onclick="UI.agent.openSheet()">浮动聊天</button><button class="btn btn-ghost btn-sm" onclick="M.chat.showConfig()">设置</button></div></div>
 ${!cfg.apiKey?`<div class="chat-config"><div style="font-size:.85rem;color:var(--text-2);margin-bottom:8px">配置大模型 API 后，可用于 (1) 模糊意图的二次识别 (2) 对话式问答。 支持 OpenAI 兼容接口。</div><button class="btn btn-primary btn-sm" onclick="M.chat.showConfig()">配置 API</button></div>`:''}
 <div class="chat-wrap"><div class="chat-msgs" id="chat-msgs">${this._renderChatMsgs()}</div><div class="chat-input-row"><textarea id="chat-input" placeholder="输入消息，回车发送，Shift+回车换行…" rows="2" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();UI.agent.commit(this.value);this.value=''}"></textarea></div></div>`;
   const cm=document.getElementById('chat-msgs');if(cm)cm.scrollTop=cm.scrollHeight;
@@ -1274,9 +1419,10 @@ ${!cfg.apiKey?`<div class="chat-config"><div style="font-size:.85rem;color:var(-
   if(UI.agent._renderMsgs)UI.agent._renderMsgs();
 },
 
-showConfig(){const cfg=Store.data.aiConfig;UI.modal(`<div class="modal-head"><div class="modal-title">API 配置</div><button class="modal-close" onclick="UI.closeModal()">${I.close}</button></div><div class="form-group"><label class="form-label">API 地址</label><input type="text" id="ac-url" value="${U.esc(cfg.apiUrl||'')}" placeholder="https://api.openai.com/v1/chat/completions"></div><div class="form-group"><label class="form-label">API Key</label><input type="password" id="ac-key" value="${U.esc(cfg.apiKey||'')}" placeholder="sk-..."></div><div class="form-group"><label class="form-label">模型</label><input type="text" id="ac-model" value="${U.esc(cfg.model||'gpt-4o-mini')}" placeholder="gpt-4o-mini"></div><div style="background:var(--surface-2);border-radius:var(--r-xs);padding:10px;margin-bottom:14px;font-size:.78rem;color:var(--text-3)">支持 OpenAI 兼容接口。API Key 仅存储在本地浏览器，不会上传。 配置后可用于：① 模糊意图二次识别 ② AI 对话问答。 </div><button class="btn btn-primary" style="width:100%" onclick="M.chat.saveConfig()">保存配置</button>`)},
+showConfig(){const cfg=Store.data.aiConfig;const sk=Skills.list().map(s=>`<div style="display:flex;justify-content:space-between;padding:4px 0;font-size:.78rem"><span>🔌 ${U.esc(s.name)}</span><span style="color:var(--text-3)">${s.tools.length} 个工具</span></div>`).join('');UI.modal(`<div class="modal-head"><div class="modal-title">API 配置</div><button class="modal-close" onclick="UI.closeModal()">${I.close}</button></div><div class="form-group"><label class="form-label">接口类型</label><select id="ac-prov" onchange="M.chat._provHint()"><option value="openai" ${cfg.provider!=='anthropic'?'selected':''}>OpenAI 兼容（OpenAI / DeepSeek / OpenRouter / Gemini 兼容口）</option><option value="anthropic" ${cfg.provider==='anthropic'?'selected':''}>Anthropic（Claude）</option></select></div><div class="form-group"><label class="form-label">API 地址</label><input type="text" id="ac-url" value="${U.esc(cfg.apiUrl||'')}" placeholder="https://api.openai.com/v1/chat/completions"></div><div class="form-group"><label class="form-label">API Key</label><input type="password" id="ac-key" value="${U.esc(cfg.apiKey||'')}" placeholder="sk-..."></div><div class="form-group"><label class="form-label">模型</label><input type="text" id="ac-model" value="${U.esc(cfg.model||'gpt-4o-mini')}" placeholder="gpt-4o-mini"></div><div style="background:var(--surface-2);border-radius:var(--r-xs);padding:10px;margin-bottom:10px;font-size:.78rem;color:var(--text-3)">规划类消息走 Function Calling（工具 schema 不占对话上下文）；简单记录走本地规则 0 token。API Key 仅存储在本地浏览器。</div><div style="border:1px solid var(--border);border-radius:var(--r-xs);padding:10px;margin-bottom:14px"><div style="font-size:.75rem;color:var(--text-3);margin-bottom:4px">已注册技能（可插拔）</div>${sk}<div style="font-size:.72rem;color:var(--text-3);margin-top:6px">未来可挂载外部技能包（股票行情 / 邮件 / 远端 skill 下载）</div></div><button class="btn btn-primary" style="width:100%" onclick="M.chat.saveConfig()">保存配置</button>`)},
+_provHint(){const p=document.getElementById('ac-prov').value;const u=document.getElementById('ac-url');const m=document.getElementById('ac-model');if(p==='anthropic'){if(!u.value||u.value.indexOf('openai')>=0)u.value='https://api.anthropic.com/v1/messages';m.placeholder='claude-sonnet-4-20250514';if(!m.value||m.value.indexOf('gpt')>=0)m.value='claude-sonnet-4-20250514'}else{if(!u.value||u.value.indexOf('anthropic')>=0)u.value='https://api.openai.com/v1/chat/completions';m.placeholder='gpt-4o-mini';if(m.value.indexOf('claude')>=0)m.value='gpt-4o-mini'}},
 
-saveConfig(){Store.data.aiConfig={apiUrl:document.getElementById('ac-url').value,apiKey:document.getElementById('ac-key').value,model:document.getElementById('ac-model').value||'gpt-4o-mini'};Store.save();UI.closeModal();this.render();UI.toast('API配置已保存','success')},
+saveConfig(){const prov=document.getElementById('ac-prov').value;const url=document.getElementById('ac-url').value.trim()||(prov==='anthropic'?'https://api.anthropic.com/v1/messages':'https://api.openai.com/v1/chat/completions');Store.data.aiConfig={provider:prov,apiUrl:url,apiKey:document.getElementById('ac-key').value.trim(),model:document.getElementById('ac-model').value.trim()||(prov==='anthropic'?'claude-sonnet-4-20250514':'gpt-4o-mini')};Store.save();UI.closeModal();this.render();UI.toast('API配置已保存','success')},
 
 async send(){const inp=document.getElementById('chat-input');if(!inp)return;const txt=inp.value.trim();if(!txt)return;
   if(!Store.data.aiConfig.apiKey){UI.toast('请先配置API','warn');this.showConfig();return}

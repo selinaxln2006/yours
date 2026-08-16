@@ -1,5 +1,5 @@
 /* 枢 · 生活工作台 Service Worker —— 离线缓存应用外壳 */
-const CACHE = 'shu-workbench-v7';
+const CACHE = 'shu-workbench-v8';
 const ASSETS = [
   './',
   './index.html',
