@@ -1,5 +1,5 @@
 /* 枢 · 生活工作台 Service Worker —— 离线缓存应用外壳 */
-const CACHE = 'shu-workbench-v1';
+const CACHE = 'shu-workbench-v5';
 const ASSETS = [
   './',
   './index.html',
@@ -28,7 +28,21 @@ self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET' || !req.url.startsWith('http')) return;
 
-  // 仅缓存应用外壳与静态资源；API 请求（如未来的大模型/AI 接口）不拦截
+  // 导航请求（页面加载）：网络优先 —— 代码更新后刷新即可看到新版本
+  if (req.mode === 'navigate') {
+    e.respondWith(
+      fetch(req).then((res) => {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+        return res;
+      }).catch(() =>
+        caches.match(req).then((hit) => hit || caches.match('./index.html'))
+      )
+    );
+    return;
+  }
+
+  // 静态资源：缓存优先，保证离线可用
   e.respondWith(
     caches.match(req).then((hit) => {
       if (hit) return hit;
@@ -36,11 +50,7 @@ self.addEventListener('fetch', (e) => {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
         return res;
-      }).catch(() => {
-        // 离线兜底：导航请求回退到应用外壳
-        if (req.mode === 'navigate') return caches.match('./index.html');
-        return Response.error();
-      });
+      }).catch(() => Response.error());
     })
   );
 });
