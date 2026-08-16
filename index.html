@@ -248,6 +248,34 @@ textarea{resize:vertical;min-height:60px}
 @media(max-width:860px){
 #agent-fab{right:14px;bottom:14px;width:44px;height:44px}
 }
+.goal-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px;margin-bottom:12px;box-shadow:var(--shadow)}
+.goal-card.done{opacity:.65}
+.goal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.goal-head .gt{font-weight:700;font-size:.95rem;display:flex;align-items:center;gap:8px}
+.goal-head .gt .badge{font-size:.58rem;padding:2px 8px;border-radius:20px;background:var(--accent-light);color:var(--accent-h);font-weight:600}
+.goal-head .gt .badge.done{background:var(--income);color:#fff}
+.goal-head .gt .badge.expire{background:var(--warn);color:#fff}
+.goal-bar-wrap{height:8px;background:var(--surface-3);border-radius:4px;overflow:hidden;margin-bottom:6px}
+.goal-bar{height:100%;border-radius:4px;transition:width .4s ease}
+.goal-stats{display:flex;gap:14px;font-size:.78rem;color:var(--text-3);margin-bottom:10px}
+.goal-stats span strong{color:var(--text);font-size:.9rem}
+.goal-milestones{border-top:1px solid var(--border);padding-top:10px;margin-top:6px}
+.goal-ms{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:.82rem}
+.goal-ms .ms-check{width:18px;height:18px;border-radius:50%;border:2px solid var(--border-2);flex-shrink:0;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .2s}
+.goal-ms .ms-check.done{background:var(--income);border-color:var(--income);color:#fff}
+.goal-ms .ms-check.done svg{width:11px;height:11px}
+.goal-ms .ms-label{flex:1;color:var(--text-2)}
+.goal-ms .ms-label.done{text-decoration:line-through;opacity:.5}
+.goal-ms .ms-date{font-size:.72rem;color:var(--text-3)}
+.goal-empty{text-align:center;padding:40px 20px;color:var(--text-3)}
+.goal-empty svg{width:48px;height:48px;margin-bottom:12px;opacity:.3}
+.goal-type-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:14px}
+.goal-type-btn{border:1px solid var(--border);border-radius:var(--r-sm);padding:12px;text-align:center;cursor:pointer;transition:all .2s;background:var(--surface-2)}
+.goal-type-btn:hover{border-color:var(--accent)}
+.goal-type-btn.sel{border-color:var(--accent);background:var(--accent-light)}
+.goal-type-btn svg{width:22px;height:22px;margin-bottom:4px;color:var(--accent)}
+.goal-type-btn .lbl{font-size:.8rem;font-weight:600}
+.goal-type-btn .desc{font-size:.68rem;color:var(--text-3);margin-top:2px}
 </style>
 <link rel="manifest" href="manifest.json">
 <link rel="apple-touch-icon" sizes="180x180" href="icons/icon-192.png">
@@ -270,6 +298,7 @@ if ('serviceWorker' in navigator) {
 <div id="m-schedule" class="module"></div>
 <div id="m-todo" class="module"></div>
 <div id="m-chat" class="module"></div>
+<div id="m-goals" class="module"></div>
 <div id="m-settings" class="module"></div>
 </main>
 <nav id="bottomnav"></nav>
@@ -329,6 +358,7 @@ face:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1
 stretch:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5" r="2"/><path d="M9 8l-3 8 4 2 2 6M15 8l3 8-4 2-2 6"/></svg>',
 bed:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20V12a2 2 0 012-2h16a2 2 0 012 2v8M2 16h20M6 10V7a2 2 0 012-2h2"/></svg>',
 shield:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
+target:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>',
 };
 const CFG={KEY:'shu_wb_v1',BACKUP_N:20,VERSION:2,CLOUD_KEY:'shu_wb_cloud_v1'};
 const U={
@@ -519,7 +549,7 @@ tryCloudPush(){if(!Adapters.Cloud.enabled())return;Adapters.Cloud.save(this.data
 export(){const b=new Blob([JSON.stringify(this.data,null,2)],{type:'application/json'});const u=URL.createObjectURL(b);const a=document.createElement('a');a.href=u;a.download='workbench-'+U.today()+'.json';document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(u);UI.toast('已导出备份文件','success')},
 import(js,rep){try{const imp=JSON.parse(js);if(rep)this.data=this.validate(imp);else{for(const k in imp){if(Array.isArray(this.data[k]))this.data[k]=this.data[k].concat(imp[k]);else if(typeof this.data[k]==='object'&&this.data[k]!==null)Object.assign(this.data[k],imp[k]);else this.data[k]=imp[k]}this.data=this.validate(this.data)}this.save();UI.renderAll();UI.toast('导入成功（'+(rep?'替换':'合并')+'模式）','success')}catch(e){UI.toast('导入失败：文件格式错误','error')}},
 reset(){this.data=this.demo();this.counter=0;this.save();UI.renderAll();UI.toast('已重置为演示数据','info')},
-clearAll(){this.data=this.validate({profile:{},transactions:[],investments:[],weights:[],meals:[],water:[],exerciseLog:[],exercisePlan:[],sleep:[],beauty:[],stretching:[],schedule:[],todos:[],aiConfig:{},chatHistory:[],settings:{},cloudSync:{url:'',key:'',enabled:false}});this.counter=0;this.save();UI.renderAll();UI.toast('所有数据已清空','info')},
+clearAll(){this.data=this.validate({profile:{},transactions:[],investments:[],weights:[],meals:[],water:[],exerciseLog:[],exercisePlan:[],sleep:[],beauty:[],stretching:[],schedule:[],todos:[],goals:[],aiConfig:{},chatHistory:[],settings:{},cloudSync:{url:'',key:'',enabled:false}});this.counter=0;this.save();UI.renderAll();UI.toast('所有数据已清空','info')},
 demo(){const t=U.today();const y=new Date();y.setDate(y.getDate()-1);const yd=y.getFullYear()+'-'+String(y.getMonth()+1).padStart(2,'0')+'-'+String(y.getDate()).padStart(2,'0');const y2=new Date();y2.setDate(y2.getDate()-2);const d2=y2.getFullYear()+'-'+String(y2.getMonth()+1).padStart(2,'0')+'-'+String(y2.getDate()).padStart(2,'0');const y3=new Date();y3.setDate(y3.getDate()-3);const d3=y3.getFullYear()+'-'+String(y3.getMonth()+1).padStart(2,'0')+'-'+String(y3.getDate()).padStart(2,'0');
 return{profile:{name:'',height:165,age:20,targetWeight:55,targetBodyFat:24,activityLevel:1.4,dailyCalorieTarget:1600,dailyBudget:45,targetWater:2000},
 transactions:[
@@ -546,7 +576,7 @@ stretching:[{id:U.uid(),type:'面部按摩',duration:10,date:yd},{id:U.uid(),typ
 schedule:[{id:U.uid(),title:'量化研究',date:t,startTime:'14:00',endTime:'15:30',category:'quant',note:'策略回测'},{id:U.uid(),title:'健身房',date:t,startTime:'18:00',endTime:'19:00',category:'fitness',note:'力量训练'},{id:U.uid(),title:'晚间学习',date:t,startTime:'20:00',endTime:'21:00',category:'study',note:'复习今日笔记'}],
 todos:[{id:U.uid(),title:'更新简历',priority:'high',done:false,dueDate:t,category:'求职'},{id:U.uid(),title:'完成今日作业',priority:'high',done:false,dueDate:t,category:'学业'},{id:U.uid(),title:'数据分析练习',priority:'mid',done:false,dueDate:t,category:'quant'},{id:U.uid(),title:'整理本周开销',priority:'low',done:true,dueDate:yd,category:'生活',completedDate:yd}],
 water:[{id:U.uid(),amount:500,date:t},{id:U.uid(),amount:350,date:t}],
-aiConfig:{apiUrl:'',apiKey:'',model:'gpt-4o-mini'},chatHistory:[],settings:{theme:'light'},cloudSync:{url:'',key:'',enabled:false}}}
+aiConfig:{apiUrl:'',apiKey:'',model:'gpt-4o-mini'},chatHistory:[],goals:[],settings:{theme:'light'},cloudSync:{url:'',key:'',enabled:false}}}
 };
 const Chart={
 donut(data,w,h){const total=data.reduce((s,d)=>s+d.value,0)||1;const r=60,cx=70,cy=70,circ=2*Math.PI*r;let off=0;let s=`<svg class="donut" viewBox="0 0 140 140"><circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--surface-3)" stroke-width="14"/>`;data.forEach(d=>{const len=d.value/total*circ;s+=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${d.color}" stroke-width="14" stroke-dasharray="${len} ${circ-len}" stroke-dashoffset="${-off}" transform="rotate(-90 ${cx} ${cy})"/>`;off+=len});return s+'</svg>'},
@@ -556,7 +586,7 @@ ring(pct,size,color){const r=size/2-6,cx=size/2,cy=size/2,circ=2*Math.PI*r,len=p
 };
 let curModule='dashboard';
 const UI={
-navItems:[{id:'dashboard',label:'今日',icon:'home'},{id:'finance',label:'记账',icon:'wallet'},{id:'fitness',label:'健身',icon:'dumbbell'},{id:'wellness',label:'养生',icon:'heart'},{id:'schedule',label:'日程',icon:'calendar'},{id:'todo',label:'待办',icon:'check'},{id:'chat',label:'助手',icon:'chat'},{id:'settings',label:'设置',icon:'settings'}],
+navItems:[{id:'dashboard',label:'今日',icon:'home'},{id:'finance',label:'记账',icon:'wallet'},{id:'fitness',label:'健身',icon:'dumbbell'},{id:'wellness',label:'养生',icon:'heart'},{id:'schedule',label:'日程',icon:'calendar'},{id:'todo',label:'待办',icon:'check'},{id:'goals',label:'目标',icon:'target'},{id:'chat',label:'助手',icon:'chat'},{id:'settings',label:'设置',icon:'settings'}],
 init(){
 const nh=this.navItems.map(n=>`<button class="nav-item ${n.id==='dashboard'?'active':''}" data-module="${n.id}">${I[n.icon]}<span>${n.label}</span></button>`).join('');
 document.getElementById('nav-items').innerHTML=nh;
@@ -1061,6 +1091,61 @@ showAdd(){UI.modal(`<div class="modal-head"><div class="modal-title">新建待�
 save(){const t=document.getElementById('td-t').value.trim();if(!t){UI.toast('请输入标题','error');return}Store.data.todos.push({id:U.uid(),title:t,priority:document.getElementById('td-p').value,done:false,dueDate:document.getElementById('td-d').value,category:document.getElementById('td-c').value});Store.save();UI.closeModal();this.render();UI.toast('已添加待办','success')},
 toggle(id){const x=Store.data.todos.find(t=>t.id===id);if(!x)return;x.done=!x.done;if(x.done)x.completedDate=U.today();else delete x.completedDate;Store.save();this.render()},
 del(id){UI.confirm('删除这条待办？',()=>{Store.data.todos=Store.data.todos.filter(x=>x.id!==id);Store.save();this.render();UI.toast('已删除','info')})}
+};
+M.goals={
+render(){const d=Store.data;const goals=d.goals||[];const active=goals.filter(g=>g.status!=='done');const done=goals.filter(g=>g.status==='done');
+let html=`<div class="page-header"><div><div class="page-title">目标</div><div class="page-sub">${active.length} 进行中 · ${done.length} 已达成</div></div><button class="btn btn-primary btn-sm" onclick="M.goals.showAdd()">${I.plus} 新建目标</button></div>`;
+if(!goals.length){html+=`<div class="goal-empty">${I.target}<div>还没有目标。点击「新建目标」开始你的第一个挑战。</div></div>`}
+else{
+active.forEach(g=>{html+=this._card(g)});
+if(done.length){html+=`<div class="card" style="margin-top:16px"><div class="card-title" style="opacity:.7">${I.target} 已达成 (${done.length})</div>${done.map(g=>this._card(g,true)).join('')}</div>`}
+}
+document.getElementById('m-goals').innerHTML=html},
+_card(g,compact){const p=this._progress(g);const cv=this._currentVal(g);const pc={weight:'var(--accent)',saving:'var(--income)',habit:'var(--info)',custom:'var(--warn)'};const pn={weight:'减脂',saving:'储蓄',habit:'习惯',custom:'自定义'};const expired=g.endDate&&g.endDate<U.today()&&g.status!=='done';
+let h=`<div class="goal-card ${g.status==='done'?'done':''}"><div class="goal-head"><div class="gt">${I.target} ${U.esc(g.title)} <span class="badge ${g.status==='done'?'done':''} ${expired?'expire':''}">${g.status==='done'?'已达成':expired?'已过期':pn[g.type]||'进行中'}</span></div><div style="display:flex;gap:4px"><button class="btn-icon" onclick="M.goals.detail('${g.id}')">${I.target}</button><button class="btn-icon" onclick="M.goals.del('${g.id}')">${I.trash}</button></div></div>`;
+h+=`<div class="goal-bar-wrap"><div class="goal-bar" style="width:${p}%;background:${pc[g.type]||'var(--accent)'}"></div></div>`;
+h+=`<div class="goal-stats"><span>当前 <strong>${cv}${g.unit||''}</strong></span><span>目标 <strong>${g.target}${g.unit||''}</strong></span><span>进度 <strong>${p}%</strong></span>${g.endDate?`<span>截止 <strong>${U.fmtD(g.endDate)}</strong></span>`:''}</div>`;
+if(!compact&&g.milestones&&g.milestones.length){
+h+=`<div class="goal-milestones">${g.milestones.map(m=>`<div class="goal-ms"><div class="ms-check ${m.done?'done':''}" onclick="M.goals.toggleMs('${g.id}','${m.id}')">${m.done?I.check:''}</div><span class="ms-label ${m.done?'done':''}">${U.esc(m.title)}</span>${m.date?`<span class="ms-date">${U.fmtD(m.date)}</span>`:''}</div>`).join('')}</div>`}
+h+=`</div>`;return h},
+_progress(g){if(g.status==='done')return 100;const cv=this._currentVal(g);if(g.type==='weight'){const start=g.startVal||cv;const diff=Math.abs(g.target-start);if(diff===0)return 100;const cur=Math.abs(cv-start);return U.clamp(Math.round(cur/diff*100),0,100)}if(g.type==='saving'){if(!g.target)return 0;return U.clamp(Math.round(cv/g.target*100),0,100)}if(g.type==='habit'){if(!g.target)return 0;return U.clamp(Math.round(cv/g.target*100),0,100)}if(g.type==='custom'){if(g.milestones&&g.milestones.length){const dn=g.milestones.filter(m=>m.done).length;return Math.round(dn/g.milestones.length*100)}return 0}return 0},
+_currentVal(g){if(g.type==='weight'){const ws=Store.data.weights;if(!ws.length)return g.startVal||0;return ws[ws.length-1].weight}if(g.type==='saving'){return Store.data.investments.reduce((s,i)=>s+(i.amount||0),0)}if(g.type==='habit'){const field=g.habitField||'stretching';const arr=Store.data[field]||[];if(!arr.length)return 0;const sd=g.startDate?new Date(g.startDate):new Date(Date.now()-g.target*86400000);let streak=0;for(let dt=new Date();dt>=sd;dt.setDate(dt.getDate()-1)){const ds=dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0');if(arr.some(x=>x.date===ds))streak++;else if(streak>0)break}return streak}return g.manualCurrent||0},
+showAdd(){UI.modal(`<div class="modal-head"><div class="modal-title">新建目标</div><button class="modal-close" onclick="UI.closeModal()">${I.close}</button></div>
+<div class="goal-type-grid" id="gt-grid"><div class="goal-type-btn sel" onclick="M.goals._selType('weight')" data-t="weight">${I.target}<div class="lbl">减脂瘦身</div><div class="desc">自动追踪体重</div></div><div class="goal-type-btn" onclick="M.goals._selType('saving')" data-t="saving">${I.wallet}<div class="lbl">储蓄目标</div><div class="desc">追踪资产总额</div></div><div class="goal-type-btn" onclick="M.goals._selType('habit')" data-t="habit">${I.heart}<div class="lbl">习惯养成</div><div class="desc">连续打卡天数</div></div><div class="goal-type-btn" onclick="M.goals._selType('custom')" data-t="custom">${I.sparkles}<div class="lbl">自定义</div><div class="desc">手动追踪</div></div></div>
+<div id="gt-fields"></div>
+<div id="gt-todos" style="margin-top:6px"></div>
+<button class="btn btn-primary" style="width:100%" onclick="M.goals.save()">${I.plus} 创建目标</button>`)},
+_selType(t){document.querySelectorAll('#gt-grid .goal-type-btn').forEach(b=>b.classList.toggle('sel',b.dataset.t===t));this._renderFields(t)},
+_renderFields(t){const d=Store.data;const el=document.getElementById('gt-fields');if(!el)return;
+if(t==='weight'){const lw=d.weights.length?d.weights[d.weights.length-1].weight:0;el.innerHTML=`<div class="form-group"><label class="form-label">目标标题</label><input type="text" id="g-title" value="瘦身到目标体重" placeholder="如：减脂到55kg"></div><div class="form-row"><div class="form-group"><label class="form-label">目标体重 (kg)</label><input type="number" id="g-target" value="${d.profile.targetWeight||55}" step="0.1"></div><div class="form-group"><label class="form-label">截止日期</label><input type="date" id="g-end" value="${this._addDays(U.today(),90)}"></div></div><div style="font-size:.78rem;color:var(--text-3);margin-bottom:8px">当前体重：${lw}kg · 将自动从体重记录追踪进度</div>`}
+else if(t==='saving'){el.innerHTML=`<div class="form-group"><label class="form-label">目标标题</label><input type="text" id="g-title" value="储蓄目标" placeholder="如：存满10000新币"></div><div class="form-row"><div class="form-group"><label class="form-label">目标金额</label><input type="number" id="g-target" value="10000" step="100"></div><div class="form-group"><label class="form-label">截止日期</label><input type="date" id="g-end" value="${this._addDays(U.today(),180)}"></div></div><div style="font-size:.78rem;color:var(--text-3);margin-bottom:8px">当前总资产：${U.money(d.investments.reduce((s,i)=>s+(i.amount||0),0))} · 将自动从资产记录追踪</div>`}
+else if(t==='habit'){el.innerHTML=`<div class="form-group"><label class="form-label">目标标题</label><input type="text" id="g-title" value="冥想30天" placeholder="如：冥想30天"></div><div class="form-row"><div class="form-group"><label class="form-label">习惯类型</label><select id="g-habit"><option value="stretching">拉伸/按摩</option><option value="beauty">护肤</option><option value="sleep">睡眠</option></select></div><div class="form-group"><label class="form-label">目标天数</label><input type="number" id="g-target" value="30"></div></div><div class="form-group"><label class="form-label">截止日期</label><input type="date" id="g-end" value="${this._addDays(U.today(),30)}"></div>`}
+else{el.innerHTML=`<div class="form-group"><label class="form-label">目标标题</label><input type="text" id="g-title" placeholder="如：读完3本书"></div><div class="form-row"><div class="form-group"><label class="form-label">目标值</label><input type="number" id="g-target" value="3"></div><div class="form-group"><label class="form-label">单位</label><input type="text" id="g-unit" value="本" placeholder="如：本/次/小时"></div></div><div class="form-group"><label class="form-label">截止日期</label><input type="date" id="g-end" value="${this._addDays(U.today(),60)}"></div>`}
+const tw=document.getElementById('gt-todos');if(tw){tw.innerHTML=`<div style="font-size:.78rem;color:var(--text-3);margin-bottom:4px">创建后将自动生成里程碑和待办任务</div>`}},
+_addDays(date,n){const d=new Date(date.split('T')[0]+'T00:00');d.setDate(d.getDate()+n);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')},
+save(){const grid=document.querySelectorAll('#gt-grid .goal-type-btn');let type='weight';grid.forEach(b=>{if(b.classList.contains('sel'))type=b.dataset.t});const title=document.getElementById('g-title').value.trim()||'未命名目标';const target=parseFloat(document.getElementById('g-target').value)||0;const endDate=document.getElementById('g-end').value||this._addDays(U.today(),90);const unit=type==='weight'?'kg':type==='saving'?'':type==='habit'?'天':(document.getElementById('g-unit')?document.getElementById('g-unit').value:'');const g={id:U.uid(),title,type,target,unit,startDate:U.today(),endDate,status:'active',milestones:[]};
+if(type==='weight'){g.startVal=Store.data.weights.length?Store.data.weights[Store.data.weights.length-1].weight:0}else if(type==='habit'){g.habitField=document.getElementById('g-habit').value}
+g.milestones=this._decompose(g);const todos=this._genTodos(g);Store.data.goals.push(g);if(todos.length)Store.data.todos.push(...todos);Store.save();UI.closeModal();this.render();UI.toast(`目标已创建！生成 ${g.milestones.length} 个里程碑 + ${todos.length} 个待办`,'success')},
+_decompose(g){const ms=[];if(g.type==='weight'){const start=g.startVal||60;const diff=start-g.target;if(diff<=0)return[];const steps=Math.min(Math.ceil(diff),5);const stepVal=diff/steps;for(let i=1;i<=steps;i++){const t=parseFloat((start-stepVal*i).toFixed(1));const days=Math.round(90*i/steps);ms.push({id:U.uid(),title:`体重达到 ${t}kg`,target:t,done:false,date:this._addDays(U.today(),days)})}}
+else if(g.type==='saving'){const steps=Math.min(4,Math.ceil(g.target/2500));const stepVal=g.target/steps;for(let i=1;i<=steps;i++){const days=Math.round(180*i/steps);ms.push({id:U.uid(),title:`存满 ${U.money(stepVal*i)}`,target:stepVal*i,done:false,date:this._addDays(U.today(),days)})}}
+else if(g.type==='habit'){const total=g.target||30;const steps=Math.min(Math.ceil(total/7),5);const stepVal=Math.ceil(total/steps);let acc=0;for(let i=1;i<=steps;i++){acc+=stepVal;if(acc>total)acc=total;const days=Math.round(total*i/steps);ms.push({id:U.uid(),title:`连续打卡 ${acc} 天`,target:acc,done:false,date:this._addDays(U.today(),days)})}}
+else{ms.push({id:U.uid(),title:`完成第1步`,done:false,date:this._addDays(U.today(),7)});ms.push({id:U.uid(),title:`完成第2步`,done:false,date:this._addDays(U.today(),14)});ms.push({id:U.uid(),title:`达成目标`,done:false,date:g.endDate})}
+return ms},
+_genTodos(g){const todos=[];if(g.type==='weight'){const t=U.today();todos.push({id:U.uid(),title:'制定每周运动计划（4天/周）',priority:'high',done:false,dueDate:this._addDays(t,2),category:'健身'});todos.push({id:U.uid(),title:'每日记录饮食热量',priority:'mid',done:false,dueDate:this._addDays(t,1),category:'健身'});todos.push({id:U.uid(),title:'每周称重并记录',priority:'mid',done:false,dueDate:this._addDays(t,7),category:'健身'})}
+else if(g.type==='saving'){const t=U.today();todos.push({id:U.uid(),title:'制定月度预算计划',priority:'high',done:false,dueDate:this._addDays(t,3),category:'理财'});todos.push({id:U.uid(),title:'每周记账复盘',priority:'mid',done:false,dueDate:this._addDays(t,7),category:'理财'});todos.push({id:U.uid(),title:'设置自动转账到储蓄账户',priority:'mid',done:false,dueDate:this._addDays(t,5),category:'理财'})}
+else if(g.type==='habit'){const t=U.today();todos.push({id:U.uid(),title:'设置每日打卡提醒',priority:'high',done:false,dueDate:this._addDays(t,1),category:'习惯'});todos.push({id:U.uid(),title:'选择固定时间段执行',priority:'mid',done:false,dueDate:this._addDays(t,2),category:'习惯'})}
+return todos},
+toggleMs(gid,mid){const g=Store.data.goals.find(x=>x.id===gid);if(!g)return;const m=g.milestones.find(x=>x.id===mid);if(!m)return;m.done=!m.done;const allDone=g.milestones.length>0&&g.milestones.every(x=>x.done);if(allDone)g.status='done';else g.status='active';Store.save();this.render()},
+detail(id){const g=Store.data.goals.find(x=>x.id===id);if(!g)return;const p=this._progress(g);const cv=this._currentVal(g);const pc={weight:'var(--accent)',saving:'var(--income)',habit:'var(--info)',custom:'var(--warn)'};let h=`<div class="modal-head"><div class="modal-title">${U.esc(g.title)}</div><button class="modal-close" onclick="UI.closeModal()">${I.close}</button></div>`;
+h+=`<div class="goal-bar-wrap" style="margin:14px 0"><div class="goal-bar" style="width:${p}%;background:${pc[g.type]||'var(--accent)'}"></div></div>`;
+h+=`<div class="goal-stats" style="margin-bottom:14px"><span>当前 <strong>${cv}${g.unit||''}</strong></span><span>目标 <strong>${g.target}${g.unit||''}</strong></span><span>进度 <strong>${p}%</strong></span></div>`;
+h+=`<div class="card-title" style="margin-bottom:8px">里程碑</div>`;
+if(g.milestones&&g.milestones.length){h+=g.milestones.map(m=>`<div class="goal-ms"><div class="ms-check ${m.done?'done':''}" onclick="M.goals.toggleMs('${g.id}','${m.id}');UI.closeModal();setTimeout(()=>M.goals.detail('${g.id}'),50)">${m.done?I.check:''}</div><span class="ms-label ${m.done?'done':''}">${U.esc(m.title)}</span>${m.date?`<span class="ms-date">${U.fmtD(m.date)}</span>`:''}</div>`).join('')}
+else{h+='<div class="empty">暂无里程碑</div>'}
+h+=`<div style="margin-top:14px;display:flex;gap:8px"><button class="btn btn-ghost" style="flex:1" onclick="UI.closeModal()">关闭</button>${g.status!=='done'?`<button class="btn btn-primary" style="flex:1" onclick="M.goals._complete('${g.id}')">标记完成</button>`:''}</div>`;
+UI.modal(h)},
+_complete(id){const g=Store.data.goals.find(x=>x.id===id);if(!g)return;g.status='done';if(g.milestones)g.milestones.forEach(m=>m.done=true);Store.save();UI.closeModal();this.render();UI.toast('恭喜达成目标！','success')},
+del(id){UI.confirm('删除这个目标？关联的待办不会被删除。',()=>{Store.data.goals=Store.data.goals.filter(x=>x.id!==id);Store.save();this.render();UI.toast('已删除','info')})}
 };
 M.chat={
 genContext(){const t=U.today(),d=Store.data;let c=`今日数据摘要（${t}）：\n`;const ex=d.transactions.filter(x=>x.date===t&&x.type==='expense');if(ex.length)c+=`- 支出：${U.money(ex.reduce((s,e)=>s+e.amount,0))}（${ex.length}笔）\n`;const ms=d.meals.filter(m=>m.date===t);if(ms.length)c+=`- 摄入：${ms.reduce((s,m)=>s+m.calories,0)}kcal\n`;const el=d.exerciseLog.filter(e=>e.date===t);if(el.length)c+=`- 运动：${el.length}项，消耗${el.reduce((s,e)=>s+(e.calories||0),0)}kcal\n`;const sl=d.sleep.find(s=>s.date===t);if(sl)c+=`- 睡眠：${sl.hours}h，质量${sl.quality}/5\n`;const td=d.todos.filter(x=>!x.done);if(td.length)c+=`- 待办：${td.length}项未完成\n`;return c||'暂无今日数据'},
