@@ -1,0 +1,27 @@
+{
+  "name": "枢 · 生活工作台",
+  "short_name": "枢工作台",
+  "description": "集成式个人生活管理：今日指数、记账理财、减脂健身、生活习惯、日程统筹、待办",
+  "lang": "zh-CN",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#F5F1EB",
+  "theme_color": "#F5F1EB",
+  "categories": ["productivity", "finance", "health"],
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
