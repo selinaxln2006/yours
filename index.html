@@ -1335,7 +1335,7 @@ _planCard(m){
   return `<div class="chat-msg bot"><b>🧠 执行计划（${(m.actions||[]).length} 项操作）</b><div style="margin-top:4px">${acts}</div>${m.reply?`<div style="margin-top:6px;font-size:.8rem;color:var(--text-2);line-height:1.6">${U.esc(m.reply)}</div>`:''}<div style="display:flex;gap:6px;margin-top:8px"><button class="btn btn-primary btn-sm" onclick="Agent.executePlan('${m.id}')">确认执行</button><button class="btn btn-ghost btn-sm" onclick="Agent.dropPlan('${m.id}')">取消</button></div></div>`;
 },
 
-applyAgent(idx){const d=Store.data;const hist=d.chatHistory;const msg=hist.find(m=>m.idx===idx&&m.role==='parsed');if(!msg)return;
+applyAgent(idx){const d=Store.data;const hist=d.chatHistory;const msg=hist.find(m=>m.idx===+idx&&m.role==='parsed');if(!msg)return;
   const p=msg.parsed;
   /* 主路由（primary intent 引导到对应模块） */
   const targetModules={meal:'fitness',exercise:'fitness',stretch:'wellness',sleep:'wellness',water:'wellness',schedule:'schedule',todo:'todo'};
@@ -1363,13 +1363,13 @@ applyAgent(idx){const d=Store.data;const hist=d.chatHistory;const msg=hist.find(
   const target=targetModules[p.intent];if(target){UI.nav(target)}
 },
 
-editPending(idx){const d=Store.data;const hist=d.chatHistory;const msg=hist.find(m=>m.idx===idx&&m.role==='parsed');if(!msg)return;
+editPending(idx){const d=Store.data;const hist=d.chatHistory;const msg=hist.find(m=>m.idx===+idx&&m.role==='parsed');if(!msg)return;
   const p=msg.parsed;
   /* 在 modal 里编辑所有 items（简单版：转成 JSON 文本编辑） */
   const txt=JSON.stringify(p.items,null,2);
   UI.modal(`<div class="modal-head"><div class="modal-title">编辑识别结果（JSON）</div><button class="modal-close" onclick="UI.closeModal()">${I.close}</button></div><textarea id="ed-json" style="width:100%;min-height:300px;font-size:.78rem;font-family:monospace">${U.esc(txt)}</textarea><div style="display:flex;gap:8px;margin-top:12px"><button class="btn btn-primary" style="flex:1" onclick="M.chat.saveEdit('${idx}')">保存</button><button class="btn btn-ghost" style="flex:1" onclick="UI.closeModal()">取消</button></div>`);
 },
-saveEdit(idx){const d=Store.data;const hist=d.chatHistory;const msg=hist.find(m=>m.idx===idx&&m.role==='parsed');if(!msg)return;
+saveEdit(idx){const d=Store.data;const hist=d.chatHistory;const msg=hist.find(m=>m.idx===+idx&&m.role==='parsed');if(!msg)return;
   try{
     const items=JSON.parse(document.getElementById('ed-json').value);
     msg.parsed.items=items;msg.parsed.intent=items[0]?.intent||msg.parsed.intent;
@@ -1380,7 +1380,7 @@ saveEdit(idx){const d=Store.data;const hist=d.chatHistory;const msg=hist.find(m=
   }catch(e){UI.toast('JSON 解析失败：'+e.message,'error')}
 },
 
-dropPending(idx){const hist=Store.data.chatHistory;const i=hist.findIndex(m=>m.idx===idx&&m.role==='parsed');if(i<0)return;hist[i].role='system-skip';Store.save();if(UI.agent._renderMsgs)UI.agent._renderMsgs();const mc=document.getElementById('chat-msgs');if(mc){mc.innerHTML=this._renderChatMsgs();mc.scrollTop=mc.scrollHeight}UI.toast('已取消','info')},
+dropPending(idx){const hist=Store.data.chatHistory;const i=hist.findIndex(m=>m.idx===+idx&&m.role==='parsed');if(i<0)return;hist[i].role='system-skip';Store.save();if(UI.agent._renderMsgs)UI.agent._renderMsgs();const mc=document.getElementById('chat-msgs');if(mc){mc.innerHTML=this._renderChatMsgs();mc.scrollTop=mc.scrollHeight}UI.toast('已取消','info')},
 
 _renderChatMsgs(){const d=Store.data;const msgs=d.chatHistory||[];let html='';if(!msgs.length)html='<div class="empty" style="padding:40px 16px"><div style="font-size:.9rem">聊天记录将在这里展示</div></div>';
   msgs.forEach(m=>{
