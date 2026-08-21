@@ -1,0 +1,172 @@
+#!/usr/bin/env node
+/* cli.js — PAA Phase B CLI 宿主：本地文件系统上的 agent 入口
+   用法：
+     node paa/src/cli.js "<需求描述>" [--yes] [--root DIR] [--max-rounds N]
+       [--provider openai|anthropic] [--api-url URL] [--api-key KEY] [--model M] [--config PATH]
+   配置优先级：命令行 flags > 环境变量 PAA_* > config.json（--config 指定或 ./config.json）
+   写操作默认逐条确认（Enter=y / n 拒绝）；--yes 全自动执行。 */
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import readline from 'node:readline/promises';
+import { createSkills } from './core/skills.js';
+import { createToolPipeline } from './core/tool-pipeline.js';
+import { createLLMAdapter } from './core/llm-adapter.js';
+import { createAgentLoop } from './core/agent-loop.js';
+import { registerFsTools } from './tools/fs-tools.js';
+import { today } from './util.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PKG_ROOT = path.resolve(__dirname, '..');
+
+/* ---------- 参数与配置 ---------- */
+function parseArgs(argv) {
+  const a = { query: '', yes: false, root: process.cwd(), maxRounds: 10, timeoutMs: 90000, config: null, provider: null, apiUrl: null, apiKey: null, model: null };
+  const positional = [];
+  for (let i = 0; i < argv.length; i++) {
+    const t = argv[i];
+    if (t === '--yes') a.yes = true;
+    else if (t === '--root') a.root = argv[++i];
+    else if (t === '--max-rounds') a.maxRounds = parseInt(argv[++i], 10) || 10;
+    else if (t === '--timeout-ms') a.timeoutMs = parseInt(argv[++i], 10) || 90000;
+    else if (t === '--config') a.config = argv[++i];
+    else if (t === '--provider') a.provider = argv[++i];
+    else if (t === '--api-url') a.apiUrl = argv[++i];
+    else if (t === '--api-key') a.apiKey = argv[++i];
+    else if (t === '--model') a.model = argv[++i];
+    else positional.push(t);
+  }
+  a.query = positional.join(' ');
+  return a;
+}
+
+function loadConfig(a) {
+  const cfg = { provider: 'openai', apiUrl: '', apiKey: '', model: '' };
+  /* 1) config 文件（最低优先级） */
+  const candidates = [a.config, path.join(PKG_ROOT, 'config.json'), path.join(process.cwd(), 'paa.config.json')].filter(Boolean);
+  for (const c of candidates) {
+    if (fs.existsSync(c)) {
+      try { Object.assign(cfg, JSON.parse(fs.readFileSync(c, 'utf8'))); } catch (e) { console.error('⚠ 读取配置文件失败（忽略）：' + c + ' — ' + e.message); }
+      break;
+    }
+  }
+  /* 2) 环境变量 PAA_* */
+  if (process.env.PAA_PROVIDER) cfg.provider = process.env.PAA_PROVIDER;
+  if (process.env.PAA_API_URL) cfg.apiUrl = process.env.PAA_API_URL;
+  if (process.env.PAA_API_KEY) cfg.apiKey = process.env.PAA_API_KEY;
+  if (process.env.PAA_MODEL) cfg.model = process.env.PAA_MODEL;
+  /* 3) 命令行 flags（最高优先级） */
+  if (a.provider) cfg.provider = a.provider;
+  if (a.apiUrl) cfg.apiUrl = a.apiUrl;
+  if (a.apiKey) cfg.apiKey = a.apiKey;
+  if (a.model) cfg.model = a.model;
+  /* 默认 URL */
+  if (!cfg.apiUrl) cfg.apiUrl = cfg.provider === 'anthropic' ? 'https://api.anthropic.com/v1/messages' : 'https://api.openai.com/v1/chat/completions';
+  return cfg;
+}
+
+const LABELS = {
+  'fs__read': '📖 读取文件',
+  'fs__grep': '🔍 搜索代码',
+  'fs__check': '✔️ 验证语法',
+  'fs__write': '✏️ 写入文件',
+  'fs__shell': '⚙️ 执行命令'
+};
+const labelFn = fn => LABELS[fn] || fn;
+
+function fmtArgs(args) {
+  const flat = {};
+  for (const [k, v] of Object.entries(args || {})) {
+    flat[k] = typeof v === 'string' && v.length > 120 ? v.slice(0, 120) + '…(' + v.length + '字)' : v;
+  }
+  return Object.entries(flat).map(([k, v]) => k + '=' + JSON.stringify(v)).join(' · ').slice(0, 400);
+}
+
+/* ---------- 主流程 ---------- */
+async function main() {
+  const a = parseArgs(process.argv.slice(2));
+  if (!a.query) {
+    console.log('用法：node paa/src/cli.js "<需求描述>" [--yes] [--root DIR] [--config PATH]\n');
+    console.log('示例：');
+    console.log('  node paa/src/cli.js "读取 index.html 并总结其中 AgentLoop 的实现"');
+    console.log('  node paa/src/cli.js --yes "修复 paa/src/core/agent-loop.js 的语法错误并用 node --check 验证"');
+    console.log('\n配置（优先级 flags > env > config.json）：');
+    console.log('  环境变量：PAA_PROVIDER / PAA_API_KEY / PAA_API_URL / PAA_MODEL');
+    console.log('  配置文件：paa/config.json（复制 config.example.json 填写）');
+    return;
+  }
+
+  const cfg = loadConfig(a);
+  if (!cfg.apiKey || cfg.apiKey === 'PASTE_YOUR_API_KEY_HERE') {
+    console.error('❌ 未配置 LLM API Key。请先设置环境变量 PAA_API_KEY，或创建 paa/config.json（参考 config.example.json）。');
+    process.exit(1);
+  }
+
+  /* 组装宿主：skills + fs 工具 + pipeline + llm + loop */
+  const skills = createSkills();
+  registerFsTools(skills, { root: a.root });
+  const pipeline = createToolPipeline(skills);
+  const llm = createLLMAdapter(cfg, skills);
+  const loop = createAgentLoop({ llm, pipeline, today, labelFn });
+
+  console.log('🧠 枢（Phase B CLI）— provider: ' + cfg.provider + ' · model: ' + (cfg.model || '默认') + ' · root: ' + a.root);
+  console.log('   工具：' + skills.allTools().map(t => t.id).join(', '));
+  console.log('   需求：' + a.query + '\n');
+
+  const sys = '你是「枢」，运行在本地文件系统上的 AI 编程助手（Phase B，G3 自诊断闭环验证）。今天是 ' + today() + '。' +
+    '工作流程（严格遵守，这是硬纪律）：' +
+    '1) **定位优先**：先用 fs__grep 搜索关键词/正则定位相关代码行号，禁止上来就整读大文件（浪费上下文且容易漏细节）；' +
+    '2) **按需精读**：用 fs__read 的 offset/limit 参数只读 grep 命中行号附近的片段（如 offset=1195 limit=30）；要了解全貌时可整读小文件；' +
+    '3) **交叉验证**：结论必须引用具体「文件:行号」证据；下结论前主动检查相邻分支和调用方（grep 相关函数名/字段名确认没有遗漏场景）；' +
+    '4) **最小修改**：需要改代码时先用 fs__read 读原文件，再用 fs__write 精确改动，保留原有注释与风格；' +
+    '5) **改后必验**：每次 fs__write 修改 .js 文件后立即用 fs__check 验证语法（只读，自动执行），HTML 等文件用 fs__shell 跑 git diff；' +
+    '6) 结束时用中文总结：发现什么（附文件:行号证据）、改了什么、验证结果。' +
+    '写操作（fs__write / fs__shell）会先经用户确认再执行，你只管返回工具调用。';
+
+  let r;
+  try {
+    r = await loop.run(a.query, { sys, maxTokens: 3000, timeoutMs: a.timeoutMs, config: { maxRounds: a.maxRounds } });
+  } catch (e) {
+    console.error('❌ 规划失败：' + e.message);
+    process.exit(1);
+  }
+
+  console.log('🧠 规划完成（' + r.rounds + ' 轮' + (r.aborted ? '，中断' : '') + '）：\n');
+  if (r.reply) console.log(r.reply + '\n');
+
+  /* 待确认动作 */
+  const acts = r.actions || [];
+  if (!acts.length) {
+    console.log('（无待执行操作）');
+    return;
+  }
+  console.log('📋 待确认操作（' + acts.length + ' 项）：');
+  acts.forEach((x, i) => console.log('  [' + (i + 1) + '] ' + labelFn(x.tool) + '  ' + fmtArgs(x.args)));
+
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const results = [];
+  try {
+    for (let i = 0; i < acts.length; i++) {
+      const x = acts[i];
+      let go = a.yes;
+      if (!go) {
+        const ans = (await rl.question('执行 [' + (i + 1) + '] ' + labelFn(x.tool) + '？(y/n，Enter=y) ')).trim().toLowerCase();
+        go = ans === '' || ans === 'y' || ans === 'yes';
+      }
+      if (!go) { results.push('⏭ 跳过'); console.log('  ⏭ 已跳过\n'); continue; }
+      const res = skills.dispatch(x.tool, x.args);
+      if (res.ok) { results.push('✅'); console.log('  ✅ ' + String(res.result).split('\n')[0] + '\n'); }
+      else { results.push('❌ ' + res.error); console.log('  ❌ ' + res.error + '\n'); }
+    }
+  } finally {
+    rl.close();
+  }
+
+  const nFail = results.filter(x => x.startsWith('❌')).length;
+  const nSkip = results.filter(x => x.startsWith('⏭')).length;
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('完成：' + results.length + ' 项操作 · ' + (results.length - nFail - nSkip) + ' 成功 · ' + nFail + ' 失败 · ' + nSkip + ' 跳过');
+  if (nFail) process.exit(1);
+}
+
+main().catch(e => { console.error('❌ ' + e.message); process.exit(1); });

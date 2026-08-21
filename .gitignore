@@ -29,3 +29,6 @@ serve.err.log
 # 环境变量
 .env
 .env.local
+
+# PAA 本地密钥配置
+paa/config.json

@@ -1,0 +1,17 @@
+{
+  "name": "paa-core",
+  "version": "0.1.0",
+  "description": "Personal AI Agent Framework - Core brain layer (host-agnostic). Phase B: local Node host.",
+  "type": "module",
+  "main": "src/core/agent-loop.js",
+  "bin": {
+    "paa": "src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/cli.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}
