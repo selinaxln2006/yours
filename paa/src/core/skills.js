@@ -16,7 +16,8 @@ export function createSkills() {
         id: s.id + '__' + t.name,
         desc: t.desc,
         params: t.params,
-        readOnly: !!t.readOnly
+        readOnly: !!t.readOnly,
+        risk: t.risk || (t.readOnly ? 'read' : 'high')
       })));
       return out;
     },

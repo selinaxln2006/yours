@@ -55,6 +55,7 @@ export function registerFsTools(skills, opts) {
         name: 'read',
         desc: '读取文件内容（UTF-8）。路径相对工作区根目录。大文件先 fs__grep 定位行号，再用 offset/limit 只读需要的片段（切片模式带行号前缀）。全文件读取返回内容+行数；超过 300KB 截断。目录则返回前 100 项列表。',
         readOnly: true,
+        risk: 'read',
         params: { type: 'object', properties: {
           path: { type: 'string', description: '相对工作区根目录的文件路径，如 index.html 或 paa/src/core/agent-loop.js' },
           offset: { type: 'integer', description: '起始行号（1-based，与 fs__grep 返回的行号对应）。不传则整读' },
@@ -90,6 +91,7 @@ export function registerFsTools(skills, opts) {
         name: 'grep',
         desc: '在文件或目录中搜索文本/正则，返回「文件:行号:内容」。定位代码优先用它而不是整读大文件；搜到行号后用 fs__read 的 offset 参数读上下文。支持正则（非法正则自动降级为字面文本）。递归目录搜索自动忽略 node_modules/.git/.workbuddy 等。',
         readOnly: true,
+        risk: 'read',
         params: { type: 'object', properties: {
           pattern: { type: 'string', description: '搜索文本或正则表达式，如 "expandRecurring" 或 "rruleDays.*\\\\d"' },
           path: { type: 'string', description: '相对根目录的文件或目录，默认整个根目录递归搜索' },
@@ -149,6 +151,7 @@ export function registerFsTools(skills, opts) {
         name: 'check',
         desc: '用 node --check 验证 JS 文件语法（只读安全，不执行文件内容）。每次用 fs__write 修改 .js/.mjs/.cjs 文件后必须调用它验证，语法错误会返回精确的行号和原因。',
         readOnly: true,
+        risk: 'read',
         params: { type: 'object', properties: {
           path: { type: 'string', description: '相对根目录的 .js/.mjs/.cjs 文件路径' }
         }, required: ['path'] },
@@ -172,6 +175,7 @@ export function registerFsTools(skills, opts) {
         name: 'write',
         desc: '写入/覆盖文件内容（UTF-8，整体替换）。修改代码前先用 fs_read 读取原文件，只改动必要部分。新建文件路径需在根目录内。',
         readOnly: false,
+        risk: 'high',
         params: { type: 'object', properties: { path: { type: 'string', description: '相对工作区根目录的文件路径' }, content: { type: 'string', description: '完整新内容（整体替换）' } }, required: ['path', 'content'] },
         handler(a) {
           const content = String(a.content || '');
@@ -186,6 +190,7 @@ export function registerFsTools(skills, opts) {
         name: 'shell',
         desc: '在根目录执行 shell 命令（Windows PowerShell，超时 30s）。用于语法验证/运行测试/查看状态。禁止破坏性命令（rm -rf、格式化、关机等，已做黑名单拦截）。',
         readOnly: false,
+        risk: 'high',
         params: { type: 'object', properties: { cmd: { type: 'string', description: '要执行的命令，如 node --check paa/src/cli.js 或 git status' } }, required: ['cmd'] },
         handler(a) {
           const cmd = String(a.cmd || '').trim();

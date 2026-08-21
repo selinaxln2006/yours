@@ -14,6 +14,7 @@ import { createToolPipeline } from './core/tool-pipeline.js';
 import { createLLMAdapter } from './core/llm-adapter.js';
 import { createAgentLoop } from './core/agent-loop.js';
 import { registerFsTools } from './tools/fs-tools.js';
+import { registerMemoryTools, loadMemoryForInjection, writeAuditLog } from './tools/memory-tools.js';
 import { today } from './util.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -21,11 +22,12 @@ const PKG_ROOT = path.resolve(__dirname, '..');
 
 /* ---------- 参数与配置 ---------- */
 function parseArgs(argv) {
-  const a = { query: '', yes: false, root: process.cwd(), maxRounds: 10, timeoutMs: 90000, config: null, provider: null, apiUrl: null, apiKey: null, model: null };
+  const a = { query: '', yes: false, level: null, root: process.cwd(), maxRounds: 10, timeoutMs: 90000, config: null, provider: null, apiUrl: null, apiKey: null, model: null };
   const positional = [];
   for (let i = 0; i < argv.length; i++) {
     const t = argv[i];
     if (t === '--yes') a.yes = true;
+    else if (t === '--level') a.level = parseInt(argv[++i], 10);
     else if (t === '--root') a.root = argv[++i];
     else if (t === '--max-rounds') a.maxRounds = parseInt(argv[++i], 10) || 10;
     else if (t === '--timeout-ms') a.timeoutMs = parseInt(argv[++i], 10) || 90000;
@@ -41,7 +43,7 @@ function parseArgs(argv) {
 }
 
 function loadConfig(a) {
-  const cfg = { provider: 'openai', apiUrl: '', apiKey: '', model: '' };
+  const cfg = { provider: 'openai', apiUrl: '', apiKey: '', model: '', autonomy: { level: 1, tools: {} } };
   /* 1) config 文件（最低优先级） */
   const candidates = [a.config, path.join(PKG_ROOT, 'config.json'), path.join(process.cwd(), 'paa.config.json')].filter(Boolean);
   for (const c of candidates) {
@@ -62,6 +64,10 @@ function loadConfig(a) {
   if (a.model) cfg.model = a.model;
   /* 默认 URL */
   if (!cfg.apiUrl) cfg.apiUrl = cfg.provider === 'anthropic' ? 'https://api.anthropic.com/v1/messages' : 'https://api.openai.com/v1/chat/completions';
+  /* Autonomy：config.json 为基础，--yes = L3，--level N 覆盖 */
+  cfg.autonomy = cfg.autonomy || { level: 1, tools: {} };
+  cfg.autonomy.level = a.level != null ? a.level : (a.yes ? 3 : (cfg.autonomy.level || 1));
+  cfg.autonomy.tools = cfg.autonomy.tools || {};
   return cfg;
 }
 
@@ -70,7 +76,10 @@ const LABELS = {
   'fs__grep': '🔍 搜索代码',
   'fs__check': '✔️ 验证语法',
   'fs__write': '✏️ 写入文件',
-  'fs__shell': '⚙️ 执行命令'
+  'fs__shell': '⚙️ 执行命令',
+  'memory__search': '🔎 搜索记忆',
+  'memory__append': '📝 记录日志',
+  'memory__update': '📋 更新记忆'
 };
 const labelFn = fn => LABELS[fn] || fn;
 
@@ -86,7 +95,7 @@ function fmtArgs(args) {
 async function main() {
   const a = parseArgs(process.argv.slice(2));
   if (!a.query) {
-    console.log('用法：node paa/src/cli.js "<需求描述>" [--yes] [--root DIR] [--config PATH]\n');
+    console.log('用法：node paa/src/cli.js "<需求描述>" [--yes] [--level 0-4] [--root DIR] [--config PATH]\n');
     console.log('示例：');
     console.log('  node paa/src/cli.js "读取 index.html 并总结其中 AgentLoop 的实现"');
     console.log('  node paa/src/cli.js --yes "修复 paa/src/core/agent-loop.js 的语法错误并用 node --check 验证"');
@@ -102,18 +111,26 @@ async function main() {
     process.exit(1);
   }
 
-  /* 组装宿主：skills + fs 工具 + pipeline + llm + loop */
+  /* 组装宿主：skills + fs 工具 + memory 工具 + pipeline(autonomy) + llm + loop */
   const skills = createSkills();
   registerFsTools(skills, { root: a.root });
-  const pipeline = createToolPipeline(skills);
+  registerMemoryTools(skills, { pkgRoot: PKG_ROOT });
+  const onAudit = (entry) => writeAuditLog(PKG_ROOT, entry);
+  const pipeline = createToolPipeline(skills, { autonomy: cfg.autonomy, onAudit });
   const llm = createLLMAdapter(cfg, skills);
   const loop = createAgentLoop({ llm, pipeline, today, labelFn });
 
+  /* 启动注入记忆 */
+  const memInjection = loadMemoryForInjection(PKG_ROOT);
+
   console.log('🧠 枢（Phase B CLI）— provider: ' + cfg.provider + ' · model: ' + (cfg.model || '默认') + ' · root: ' + a.root);
+  console.log('   自主级：L' + cfg.autonomy.level + (a.yes && a.level == null ? ' (--yes)' : ''));
   console.log('   工具：' + skills.allTools().map(t => t.id).join(', '));
+  console.log('   记忆：' + (memInjection ? '✅ 已注入' : '⬜ 空（首次使用）'));
   console.log('   需求：' + a.query + '\n');
 
-  const sys = '你是「枢」，运行在本地文件系统上的 AI 编程助手（Phase B，G3 自诊断闭环验证）。今天是 ' + today() + '。' +
+  const sys = '你是「枢」，运行在本地文件系统上的 AI 编程助手（Phase B，G3 自诊断 + G6 记忆闭环）。今天是 ' + today() + '。' +
+    (memInjection ? '\n\n' + memInjection + '\n\n' : '\n（暂无历史记忆，这是首次会话。）\n\n') +
     '工作流程（严格遵守，这是硬纪律）：' +
     '1) **定位优先**：先用 fs__grep 搜索关键词/正则定位相关代码行号，禁止上来就整读大文件（浪费上下文且容易漏细节）；' +
     '2) **按需精读**：用 fs__read 的 offset/limit 参数只读 grep 命中行号附近的片段（如 offset=1195 limit=30）；要了解全貌时可整读小文件；' +
@@ -121,11 +138,23 @@ async function main() {
     '4) **最小修改**：需要改代码时先用 fs__read 读原文件，再用 fs__write 精确改动，保留原有注释与风格；' +
     '5) **改后必验**：每次 fs__write 修改 .js 文件后立即用 fs__check 验证语法（只读，自动执行），HTML 等文件用 fs__shell 跑 git diff；' +
     '6) 结束时用中文总结：发现什么（附文件:行号证据）、改了什么、验证结果。' +
-    '写操作（fs__write / fs__shell）会先经用户确认再执行，你只管返回工具调用。';
+    '7) **记忆固化**（硬纪律）：总结前必须调用 memory__append 记录本次关键发现和结论（只记不可推导信息：决策背景/方法论/外部链接，代码位置不存）；' +
+    '若发现值得长期保留的约定/事实，用 memory__search 检查是否已有，再提议更新 MEMORY.md（需确认）。' +
+    '记忆是线索不是事实——行动前用 fs__grep/fs__read 独立验证记忆中的断言。' +
+    '写操作（fs__write / fs__shell / memory__update）会先经用户确认再执行（当前自主级 L' + cfg.autonomy.level +
+    '，memory__append 自动执行），你只管返回工具调用。';
 
   let r;
   try {
-    r = await loop.run(a.query, { sys, maxTokens: 3000, timeoutMs: a.timeoutMs, config: { maxRounds: a.maxRounds } });
+    r = await loop.run(a.query, {
+      sys,
+      maxTokens: 3000,
+      timeoutMs: a.timeoutMs,
+      config: { maxRounds: a.maxRounds },
+      /* 第七步硬纪律的机械强制：提示词模型可能跳过，循环层兜底（G3 第三轮实测触发过跳过） */
+      requiredTool: 'memory__append',
+      requiredReminder: '系统提醒：你尚未调用 memory__append 固化本次会话记忆（工作流程第 7 步硬纪律，不可跳过）。请立即调用 memory__append 记录本次关键发现与结论（只记不可推导信息），然后再给出最终总结。'
+    });
   } catch (e) {
     console.error('❌ 规划失败：' + e.message);
     process.exit(1);

@@ -14,6 +14,9 @@ export function createAgentLoop(deps) {
       const cfg = { ...this.config, ...(opts.config || {}) };
       const ac = new AbortController();
       const st = { actions: [], reply: '', aborted: false, round: 0, lastCall: null, repeat: 0, texts: [] };
+      /* requiredTool 机械强制：提示词里的「硬纪律」模型可能跳过（G3 实测 DeepSeek 概率性无视第 7 步），
+         循环层补位才算真「硬」。done=已调用过，nagged=已提醒过（只提醒一次，避免死循环）。 */
+      const required = { done: false, nagged: false };
       this.active = { ac, st };
       /* 超时兜底：请求挂住时自动 abort（默认 90s） */
       const timer = setTimeout(() => { try { ac.abort(); } catch (e) {} }, opts.timeoutMs || 90000);
@@ -28,6 +31,7 @@ export function createAgentLoop(deps) {
             if (r.content) st.texts.push(r.content);
             msgs.push(r.rawAssistant);
             for (const tc of r.toolCalls) {
+              if (opts.requiredTool && tc.name === opts.requiredTool) required.done = true;
               /* 重复调用检测：连续 N 次相同 tool+args 指纹 → 强制终止（防模型死循环） */
               const fp = tc.name + '|' + String(tc.argsJson || '');
               if (st.lastCall === fp) { st.repeat++; } else { st.repeat = 0; st.lastCall = fp; }
@@ -48,6 +52,14 @@ export function createAgentLoop(deps) {
             if (st.aborted) break;
           } else {
             if (r && r.content) st.texts.push(r.content);
+            /* requiredTool 机械强制：模型给最终回复但没调用必需工具 → 注入提醒再追一轮（只追一次） */
+            if (opts.requiredTool && !required.done && !required.nagged && !st.aborted) {
+              required.nagged = true;
+              cfg.maxRounds += 1; /* 追加的这轮不计入原预算 */
+              msgs.push((r && r.rawAssistant) || { role: 'assistant', content: (r && r.content) || '' });
+              msgs.push({ role: 'user', content: opts.requiredReminder || ('系统提醒：你还没有调用工具 ' + opts.requiredTool + '（硬纪律）。请立即调用它完成必要记录，然后给出最终总结。') });
+              continue;
+            }
             st.reply = (r && r.content) || '';
             break;
           }
