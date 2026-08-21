@@ -208,20 +208,6 @@ textarea{resize:vertical;min-height:60px}
 #agent-fab:active{transform:scale(.92)}
 #agent-fab svg{width:22px;height:22px}
 #agent-fab.has-unread::after{content:'';position:absolute;top:6px;right:6px;width:10px;height:10px;background:var(--expense);border:2px solid var(--bg);border-radius:50%}
-/* chat 浮动小面板 —— 类似购物软件右下角客服窗口 */
-#agent-sheet{position:fixed;right:14px;bottom:calc(var(--bn-h) + 14px);width:min(420px,calc(100vw - 28px));height:min(560px,calc(100vh - var(--bn-h) - 28px));background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);box-shadow:var(--shadow-float);z-index:200;display:none;flex-direction:column;overflow:hidden;animation:popIn .2s ease}
-#agent-sheet.show{display:flex}
-@keyframes popIn{from{opacity:0;transform:translateY(12px) scale(.98)}to{opacity:1;transform:none}}
-.agent-sheet-head{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0}
-.agent-sheet-head .ttl{font-weight:700;font-size:.95rem;display:flex;align-items:center;gap:8px}
-.agent-sheet-head .ttl::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--income);box-shadow:0 0 0 3px rgba(91,140,90,.2)}
-.agent-sheet-head button{background:var(--surface-2);border-radius:50%;width:30px;height:30px;display:flex;align-items:center;justify-content:center;color:var(--text-2);cursor:pointer;border:none}
-.agent-sheet-head button:hover{background:var(--surface-3);color:var(--text)}
-.agent-sheet-head button svg{width:16px;height:16px}
-.agent-sheet-body{flex:1;overflow-y:auto;padding:12px 14px;-webkit-overflow-scrolling:touch}
-.agent-sheet-foot{background:var(--surface);border-top:1px solid var(--border);padding:10px 12px calc(env(safe-area-inset-bottom,0px) + 10px);flex-shrink:0}
-.agent-suggest{font-size:.7rem;color:var(--text-3);line-height:1.5}
-#agent-fab.hidden{display:none}
 .agent-chip2{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:var(--accent-light);color:var(--accent-h);border-radius:14px;font-size:.72rem;font-weight:600;margin:3px 4px 0 0;cursor:pointer;border:none}
 .agent-chip2:hover{background:var(--accent);color:#fff}
 /* 在 helper text 区域 */
@@ -230,6 +216,11 @@ textarea{resize:vertical;min-height:60px}
 /* chat msgs 容器 */
 .chat-msg.bot{background:var(--accent-light);color:var(--text);margin-right:auto;border-bottom-left-radius:4px;white-space:pre-wrap}
 .chat-msg.sys{background:transparent;color:var(--text-3);font-size:.72rem;text-align:center;border:none;padding:8px;font-style:italic}
+/* LLM 回复 markdown 渲染（Phase 0.2 联测修复 2026-08-17） */
+.chat-msg .md-pre{background:var(--surface-2);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:.78rem;overflow-x:auto;margin:6px 0;font-family:ui-monospace,Consolas,monospace;white-space:pre}
+.chat-msg .md-code{background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:0 4px;font-size:.8em;font-family:ui-monospace,Consolas,monospace}
+.chat-msg .md-ul{margin:4px 0;padding-left:18px;list-style:disc}
+.chat-msg .md-ul li{margin:2px 0}
 /* 24h 纵轴周视图 */
 .week-hour-grid{display:grid;grid-template-columns:60px repeat(7,1fr);gap:0;border:1px solid var(--border);border-radius:var(--r-sm);overflow:hidden;background:var(--surface)}
 .wk-time{font-size:.66rem;color:var(--text-3);padding:6px 8px;text-align:right;border-top:1px solid var(--border);background:var(--surface-2);min-height:40px;line-height:1.3}
@@ -307,25 +298,7 @@ if ('serviceWorker' in navigator) {
 <div id="modal-overlay"><div class="modal" id="modal-content"></div></div>
 <div id="toast-wrap"></div>
 <input type="file" id="file-import" accept=".json" style="display:none">
-<button id="agent-fab" title="打开助手（Alt+A）" onclick="UI.agent.toggleSheet()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/><circle cx="9" cy="10" r="0.8" fill="currentColor"/><circle cx="12" cy="10" r="0.8" fill="currentColor"/><circle cx="15" cy="10" r="0.8" fill="currentColor"/></svg></button>
-<div id="agent-sheet">
-<div class="agent-sheet-head">
-  <div class="ttl">枢 · 助手</div>
-  <div style="display:flex;gap:6px">
-    <button id="agent-clear" title="清空对话" onclick="UI.agent.clearHistory()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m3 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/></svg></button>
-    <button id="agent-config" title="配置 API" onclick="M.chat.showConfig()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 11-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 110-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 114 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 110 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg></button>
-    <button id="agent-close" title="关闭（Esc）" onclick="UI.agent.closeSheet()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
-  </div>
-</div>
-<div class="agent-sheet-body" id="agent-msgs"></div>
-<div class="agent-sheet-foot">
-  <div class="agent-suggest">试试：<b>中午吃了三文鱼鸡蛋小菠菜</b> · <b>今天睡了 7 小时</b> · <b>明天下午 2 点复盘会议</b></div>
-  <div style="display:flex;gap:8px;margin-top:8px;align-items:flex-end">
-    <textarea id="agent-sheet-input" placeholder="告诉助手你做了什么…" rows="1" style="flex:1;min-height:42px;max-height:120px;resize:none" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();UI.agent.submitFromSheet()}"></textarea>
-    <button class="btn btn-primary" style="height:42px" onclick="UI.agent.submitFromSheet()">发送</button>
-  </div>
-</div>
-</div>
+<button id="agent-fab" title="打开助手（Alt+A）" onclick="UI.nav('chat')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/><circle cx="9" cy="10" r="0.8" fill="currentColor"/><circle cx="12" cy="10" r="0.8" fill="currentColor"/><circle cx="15" cy="10" r="0.8" fill="currentColor"/></svg></button>
 <script>
 const I={
 home:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1h-5v-7H9v7H4a1 1 0 01-1-1V9.5z"/></svg>',
@@ -372,6 +345,28 @@ month(s){if(!s)return'';const p=s.split('T')[0].split('-');return p[0]+'-'+p[1]}
 year(s){if(!s)return'';return s.split('T')[0].split('-')[0]},
 monthLabel(s){if(!s)return'';const p=s.split('-');return p[0]+'年'+parseInt(p[1])+'月'},
 esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')},
+/* 轻量 markdown 渲染（2026-08-17）：先 esc 防 XSS，再渲染标记。用于 LLM 对话回复与计划卡 reply */
+md(s){
+  let h=this.esc(s);
+  h=h.replace(/```([\s\S]*?)```/g,(m,c)=>'<pre class="md-pre">'+c+'</pre>');
+  h=h.replace(/`([^`\n]+)`/g,'<code class="md-code">$1</code>');
+  h=h.replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>');
+  h=h.replace(/(^|[^*\s])\*([^*\n]+)\*(?!\*)/g,'$1<em>$2</em>');
+  const lines=h.split('\n');let out=[],inUl=false;
+  for(const ln of lines){
+    const um=ln.match(/^[ \t]*[-*•][ \t]+(.+)$/);
+    const om=ln.match(/^[ \t]*(\d+)[.、][ \t]+(.+)$/);
+    if(um||om){
+      if(!inUl){out.push('<ul class="md-ul">');inUl=true}
+      out.push('<li>'+(um?um[1]:om[1])+'</li>');
+    }else{
+      if(inUl){out.push('</ul>');inUl=false}
+      out.push(ln);
+    }
+  }
+  if(inUl)out.push('</ul>');
+  return out.join('\n').replace(/\n/g,'<br>');
+},
 clamp(n,a,b){return Math.max(a,Math.min(b,n))},
 weekDates(){const d=new Date();const day=d.getDay()||7;const mon=new Date(d);mon.setDate(d.getDate()-day+1);const r=[];for(let i=0;i<7;i++){const x=new Date(mon);x.setDate(mon.getDate()+i);r.push(x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'))}return r},
 prevDay(s){const d=new Date(s+'T00:00:00');d.setDate(d.getDate()-1);return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')},
@@ -426,9 +421,9 @@ agentParse(text){
   }
   
   /* 吃 (固体食物餐) */
-  const mealMatch=t.match(/(?:吃了?|吃了|吃的?是)(.{1,30}?)(?:[，。,.;；]|$)/);
+  const mealMatch=t.match(/(?:吃了?|吃的?是)\s*([^\s，。,.;；]{1,24}?)(?=\s|[，。,.;；]|$)/);
   if(mealMatch&&!/奶|茶|咖啡|果汁|豆浆|水/.test(mealMatch[1])){
-    const name=mealMatch[1].replace(/(今天|明天|后天|昨天|中午|早上|上午|下午|晚上|今晚|今早|明早|今天?点|昨晚).{0,6}$/,'').trim()||'饮食';
+    const name=(mealMatch[1]||'').replace(/(今天|明天|后天|昨天|中午|早上|上午|下午|晚上|今晚|今早|明早|今天?点|昨晚).{0,6}$/,'').replace(/(?:帮我|请).*$/,'').replace(/然后.*$/,'').trim()||'饮食';
     items.push({intent:'meal',name,calories:0,mealType:/早/.test(t)?'breakfast':/晚/.test(t)?'dinner':'lunch'});
   }
   
@@ -439,7 +434,7 @@ agentParse(text){
   }
   
   /* 运动 */
-  if(/跑|走|跳|游|举铁|练|瑜伽|有氧|无氧|力量|健身|hiit|爬楼|骑行|骑车|打球/.test(t)){
+  if(/跑|走|跳|游|举铁|练|瑜伽|有氧|无氧|力量|hiit|爬楼|骑行|骑车|打球|(?:去|做|练)健身|健身(?:房|了|过|半小时|\d+分钟|运动|训练|撸铁)/.test(t)){
     const dur=(t.match(/(\d+)\s*(?:分钟|min|分|个?小时?)/)||[])[1]||30;
     const km=(t.match(/(\d+(?:\.\d+)?)\s*(?:公里|km|k)/)||[])[1];
     let name='运动',kcal=Math.round(dur*6);
@@ -600,7 +595,7 @@ document.getElementById('fab').addEventListener('click',()=>this.fabAction());
 document.getElementById('file-import').addEventListener('change',e=>this.handleImport(e));
 const theme=Store.data.settings.theme||'light';document.documentElement.setAttribute('data-theme',theme);this.updateThemeLabel(theme);
 document.getElementById('modal-overlay').addEventListener('click',e=>{if(e.target===e.currentTarget)this.closeModal()});
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){const sh=document.getElementById('agent-sheet');if(sh&&sh.classList.contains('show')){UI.agent.closeSheet()}else{this.closeModal()}}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')this.closeModal()});
 /* 全局 cal-grid 滑动翻月 */
 this._bindCalSwipe();
 this.agent.bind();
@@ -625,20 +620,15 @@ closeModal(){document.getElementById('modal-overlay').classList.remove('show')},
 toast(msg,type,dur){type=type||'info';const el=document.createElement('div');el.className='toast '+type;el.textContent=msg;document.getElementById('toast-wrap').appendChild(el);setTimeout(()=>{el.style.opacity='0';el.style.transform='translateY(-10px)';el.style.transition='all .3s';setTimeout(()=>el.remove(),300)},dur||3500)},
 confirm(msg,cb){this.modal(`<div style="padding:8px 0"><p style="font-size:.95rem;margin-bottom:20px;line-height:1.6">${msg}</p><div style="display:flex;gap:10px;justify-content:flex-end"><button class="btn btn-ghost" onclick="UI.closeModal()">取消</button><button class="btn btn-danger" id="cf-yes">确认</button></div></div>`);document.getElementById('cf-yes').addEventListener('click',()=>{UI.closeModal();cb()})},
 handleImport(e){const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{this.modal(`<div class="modal-head"><div class="modal-title">导入数据</div><button class="modal-close" onclick="UI.closeModal()">${I.close}</button></div><p style="font-size:.9rem;margin-bottom:16px">文件：<strong>${f.name}</strong></p><p style="font-size:.85rem;margin-bottom:16px;color:var(--text-3)">选择导入方式：</p><div style="display:flex;gap:10px"><button class="btn btn-ghost" style="flex:1" id="imp-merge">合并（追加）</button><button class="btn btn-danger" style="flex:1" id="imp-rep">替换（覆盖）</button></div>`);const js=ev.target.result;document.getElementById('imp-merge').addEventListener('click',()=>{UI.closeModal();Store.import(js,false)});document.getElementById('imp-rep').addEventListener('click',()=>{UI.closeModal();UI.confirm('替换将覆盖所有数据，确定？',()=>Store.import(js,true))})};r.readAsText(f);e.target.value=''},
-agentBar(){return`<div class="agent-trigger" onclick="UI.agent.toggleSheet()">${I.chat}<span>告诉助手…  例：中午吃了三文鱼鸡蛋和小菠菜</span></div>`},
+agentBar(){return`<div class="agent-trigger" onclick="UI.nav('chat')">${I.chat}<span>告诉助手…  例：中午吃了三文鱼鸡蛋和小菠菜</span></div>`},
   agent:{
     _unread:false,
     bind(){const fab=document.getElementById('agent-fab');if(fab&&this._bound)return;this._bound=true;
-      document.addEventListener('keydown',e=>{if(e.altKey&&e.key==='a'){e.preventDefault();this.toggleSheet()}});
+      document.addEventListener('keydown',e=>{if(e.altKey&&e.key==='a'){e.preventDefault();UI.nav('chat')}});
     },
-    toggleSheet(){const s=document.getElementById('agent-sheet');if(!s)return;if(s.classList.contains('show')){this.closeSheet()}else{this.openSheet()}},
-    openSheet(){const s=document.getElementById('agent-sheet');if(!s)return;s.classList.add('show');const f=document.getElementById('agent-fab');if(f)f.classList.add('hidden');this._unread=false;this._updateFab();this._renderMsgs();const inp=document.getElementById('agent-sheet-input');if(inp){inp.value='';setTimeout(()=>inp.focus(),50)}const b=document.getElementById('agent-msgs');if(b)b.scrollTop=b.scrollHeight},
-    closeSheet(){const s=document.getElementById('agent-sheet');if(s)s.classList.remove('show');const f=document.getElementById('agent-fab');if(f)f.classList.remove('hidden')},
-    submitFromSheet(){const inp=document.getElementById('agent-sheet-input');if(!inp)return;const t=inp.value.trim();if(!t)return;this.commit(t);inp.value=''},
-    commit(text){const t=(text||'').trim();if(!t)return;const hist=Store.data.chatHistory||(Store.data.chatHistory=[]);const existed=hist.length;hist.push({role:'user',content:t,ts:Date.now()});Store.save();const sheetOpen=document.getElementById('agent-sheet').classList.contains('show');if(sheetOpen){this._renderMsgs()}else{this._unread=true;this._updateFab();this.openSheet()}
-      /* 先存，再让识别器异步写回；任何模式下都同时让 m-chat 视图也能看到这条 user 消息 */
-      /* 解析 */
-      setTimeout(()=>M.chat.handleAgent(t,{stayInSheet:true,userMsgIdx:existed}),30);
+    commit(text){const t=(text||'').trim();if(!t)return;const hist=Store.data.chatHistory||(Store.data.chatHistory=[]);const existed=hist.length;hist.push({role:'user',content:t,ts:Date.now()});Store.save();M.chat._refreshChats();
+      /* 先存，再让识别器异步写回；m-chat 视图已同步刷新 */
+      setTimeout(()=>M.chat.handleAgent(t,{userMsgIdx:existed}),30);
     },
     _renderMsgs(){const b=document.getElementById('agent-msgs');if(!b)return;const d=Store.data;const hist=d.chatHistory||[];let html='';if(!hist.length){html+=`<div class="chat-msg sys">还没有消息 · 试试下方建议</div>`}
     hist.forEach(m=>{
@@ -647,13 +637,16 @@ agentBar(){return`<div class="agent-trigger" onclick="UI.agent.toggleSheet()">${
       if(m.role==='user'){html+=`<div class="chat-msg user">${U.esc(m.content)}</div>`;return}
       if(m.role==='parsed'){
         const p=m.parsed||{};
-        const labels={meal:'饮食记录',exercise:'运动记录',stretch:'拉伸/按摩',sleep:'睡眠',water:'饮水',schedule:'日程',todo:'待办',note:'备注',multi:'多意图合并'};
+        const labels={meal:'饮食记录',exercise:'运动记录',stretch:'拉伸/按摩',sleep:'睡眠',water:'饮水',weight:'体重',expense:'记账',beauty:'护肤',schedule:'日程',todo:'待办',note:'备注',multi:'多意图合并'};
         const items=(p.items||[]).map(it=>{
           if(p.intent==='meal')return`🍱 ${it.name||''} · ${it.calories||0}kcal`;
           if(p.intent==='exercise')return`🏃 ${it.name||''} · ${it.duration||0}min · ${it.calories||0}kcal`;
           if(p.intent==='stretch')return`🧘 ${it.type||'拉伸'} · ${it.duration||0}min`;
           if(p.intent==='sleep')return`💤 ${it.hours||0}h`;
           if(p.intent==='water')return`💧 ${it.amount||0}ml`;
+          if(p.intent==='weight')return`⚖️ ${it.weight||0}kg`;
+          if(p.intent==='expense')return`💰 ${it.type==='income'?'收入':'支出'} ${it.amount||0}${it.category?(' · '+it.category):''}`;
+          if(p.intent==='beauty')return`✨ ${it.type||'护肤'} · ${it.duration||0}min`;
           if(p.intent==='schedule')return`📅 ${it.title||''} · ${it.startTime||''}`;
           if(p.intent==='todo')return`✓ ${it.title||''}`;
           return'';
@@ -662,12 +655,12 @@ agentBar(){return`<div class="agent-trigger" onclick="UI.agent.toggleSheet()">${
         return;
       }
       if(m.role==='applied'){html+=`<div class="chat-msg sys">✅ 已写入 ${m.count} 条到「${m.target}」 · ${U.fmtDF(m.date)}</div>`;return}
-      if(m.role==='assistant'){html+=`<div class="chat-msg bot">${U.esc(m.content)}</div>`;return}
+      if(m.role==='assistant'){html+=`<div class="chat-msg bot">${U.md(m.content)}</div>`;return}
     });
     b.innerHTML=html;b.scrollTop=b.scrollHeight},
     _updateFab(){const f=document.getElementById('agent-fab');if(f)f.classList.toggle('has-unread',!!this._unread)},
-    clearHistory(){UI.confirm('清空所有聊天记录？已写入的数据不会被删除。',()=>{Store.data.chatHistory=[];Store.save();this._renderMsgs();UI.toast('已清空','info')})},
-    fallbackBarOpen(){this.openSheet()}
+    clearHistory(){UI.confirm('清空所有聊天记录？已写入的数据不会被删除。',()=>{Store.data.chatHistory=[];Store.save();M.chat._refreshChats();UI.toast('已清空','info')})},
+    fallbackBarOpen(){UI.nav('chat')}
   },
 };
 const M={};
@@ -981,19 +974,23 @@ expandRecurring(items,from,to){
     if(!s.rrule||s.rrule==='none'){if(s.date>=from&&s.date<=to)out.push(s);return}
     const r=s.rrule;
     const start=new Date(s.date+'T00:00:00');
-    const days=s.rruleDays||[];
+    const days=(s.rruleDays||[]).map(Number);
+    const wd0=start.getDay();
     let cur=new Date(start);
     let safety=0;
     while(cur<=until(s)&&safety++<4000){
       const ds=cur.getFullYear()+'-'+String(cur.getMonth()+1).padStart(2,'0')+'-'+String(cur.getDate()).padStart(2,'0');
       if(ds>=from&&ds<=to){
-        if(r==='weekly'||r==='biweekly')out.push({...s,_isRecurring:true,_recurringDate:ds,date:ds});
+        const wd=cur.getDay();
+        if(r==='daily')out.push({...s,_isRecurring:true,_recurringDate:ds,date:ds});
+        else if(r==='weekly'&&(days.length?days.includes(wd):wd===wd0))out.push({...s,_isRecurring:true,_recurringDate:ds,date:ds});
+        else if(r==='biweekly'&&wd===wd0&&Math.round((cur-start)/864e5)%14===0)out.push({...s,_isRecurring:true,_recurringDate:ds,date:ds});
         else if(r==='monthly'&&cur.getDate()===start.getDate())out.push({...s,_isRecurring:true,_recurringDate:ds,date:ds});
-        else if(r==='weekday'){const wd=cur.getDay();if(wd>=1&&wd<=5)out.push({...s,_isRecurring:true,_recurringDate:ds,date:ds})}
-        else if(r==='custom'&&days.length&&days.includes(cur.getDay()))out.push({...s,_isRecurring:true,_recurringDate:ds,date:ds});
+        else if(r==='weekday'&&wd>=1&&wd<=5)out.push({...s,_isRecurring:true,_recurringDate:ds,date:ds});
+        else if(r==='custom'&&days.includes(wd))out.push({...s,_isRecurring:true,_recurringDate:ds,date:ds});
       }
-      const step=r==='biweekly'?2:1;
-      cur.setDate(cur.getDate()+step);
+      if(r==='monthly'){cur.setMonth(cur.getMonth()+1);continue}
+      cur.setDate(cur.getDate()+1);
     }
   });
   const seen=new Set();return out.filter(s=>{const k=s.id+(s._recurringDate||'');if(seen.has(k))return false;seen.add(k);return true});
@@ -1200,59 +1197,40 @@ Skills.register({
   {name:'add_todo',desc:'创建待办',
     params:{type:'object',properties:{title:{type:'string'},priority:{type:'string',enum:['high','mid','low']},dueDate:{type:'string',description:'YYYY-MM-DD'},category:{type:'string'}},required:['title']},
     handler(a){Store.data.todos.push({id:U.uid(),title:a.title,priority:a.priority||'mid',done:false,dueDate:a.dueDate||U.today(),category:a.category||''})}},
-  {name:'add_schedule',desc:'创建日程/提醒，支持每日或每周重复',
-    params:{type:'object',properties:{title:{type:'string'},date:{type:'string',description:'首次日期 YYYY-MM-DD'},startTime:{type:'string',description:'HH:MM'},endTime:{type:'string'},category:{type:'string',enum:['life','study','work','health','finance']},note:{type:'string'},rrule:{type:'string',enum:['none','daily','weekly'],description:'none=单次(默认) daily=每天 weekly=每周'},rruleDays:{type:'array',items:{type:'string',enum:['1','2','3','4','5','6','7']},description:'weekly时生效，1=周一…7=周日，如["1","3","5"]'}},required:['title','startTime']},
-    handler(a){Store.data.schedule.push({id:U.uid(),title:a.title,date:a.date||U.today(),startTime:a.startTime||'09:00',endTime:a.endTime||'',category:a.category||'life',note:a.note||'',rrule:a.rrule&&a.rrule!=='none'?a.rrule:'',rruleDays:a.rruleDays||[],rruleUntil:''})}},
+  {name:'add_schedule',desc:'创建日程/提醒，支持每日/每周重复', 
+    params:{type:'object',properties:{title:{type:'string'},date:{type:'string',description:'首次日期 YYYY-MM-DD'},startTime:{type:'string',description:'HH:MM'},endTime:{type:'string'},category:{type:'string',enum:['life','study','work','health','finance']},note:{type:'string'},rrule:{type:'string',enum:['none','daily','weekly'],description:'none=单次(默认) daily=每天 weekly=每周'},rruleDays:{type:'array',items:{type:'integer',minimum:1,maximum:7},description:'weekly时生效，1=周一…7=周日，如[1,3,5]；不传则按首次日期所在星期'},rruleUntil:{type:'string',description:'结束日期 YYYY-MM-DD（可选，重复到哪天）'},count:{type:'integer',description:'重复次数（可选，如weekly+count=10表示持续10周；与rruleUntil二选一）'}},required:['title','startTime']},
+    handler(a){let until=a.rruleUntil||'';const rrule=a.rrule&&a.rrule!=='none'?a.rrule:'';if(!until&&a.count&&rrule){const d=new Date((a.date||U.today())+'T00:00:00');const n=Math.max(1,Math.floor(+a.count||1));if(rrule==='weekly')d.setDate(d.getDate()+(n-1)*7);else if(rrule==='biweekly')d.setDate(d.getDate()+(n-1)*14);else if(rrule==='daily')d.setDate(d.getDate()+(n-1));else if(rrule==='monthly')d.setMonth(d.getMonth()+(n-1));until=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}Store.data.schedule.push({id:U.uid(),title:a.title,date:a.date||U.today(),startTime:a.startTime||'09:00',endTime:a.endTime||'',category:a.category||'life',note:a.note||'',rrule:rrule,rruleDays:(a.rruleDays||[]).map(Number),rruleUntil:until})}},
   {name:'add_transaction',desc:'记账（收入/支出）',
     params:{type:'object',properties:{type:{type:'string',enum:['expense','income']},amount:{type:'number'},category:{type:'string'},note:{type:'string'},date:{type:'string'}},required:['type','amount']},
     handler(a){Store.data.transactions.push({id:U.uid(),date:a.date||U.today(),type:a.type,amount:+a.amount,category:a.category||'其他',note:a.note||''})}}
   ]
 });
 
-/* ===== Agent 编排层：意图路由 + LLM Function Calling =====
-   简单意图走本地规则（0 token）；规划类意图走 tools 协议（schema 不进 system prompt） */
-const Agent={
-  PLAN_RE:/减.{0,4}(重|斤|kg)|增(重|肌)|瘦身|减肥|计划|规划|拆解|帮我安排|目标|存钱|攒钱|攒下|养成.{0,8}习惯|提醒我|监督我|自律|坚持/,
-  isPlanning(t){return this.PLAN_RE.test(t||'')},
-  _refreshMods(){['dashboard','goals','todo','schedule','fitness','wellness','finance'].forEach(k=>{try{const el=document.getElementById('m-'+k);if(el&&M[k]&&typeof M[k].render==='function')M[k].render()}catch(e){}})},
-  async plan(text,opts){
-    opts=opts||{};const d=Store.data,cfg=d.aiConfig||{},hist=d.chatHistory||(d.chatHistory=[]);
-    const lk='plan-'+Date.now();hist.push({role:'assistant',content:'🧠 正在规划（调用工具中）…',_lk:lk,ts:Date.now()});Store.save();M.chat._refreshChats();
-    const sys='你是「枢」，用户的生活规划 agent。今天是 '+U.today()+'。工作流程：1) 先调用 query_summary 了解用户现状；2) 根据需求调用多个工具完成跨模块拆解（例：用户要减重15斤 → create_goal(weight) + add_weight(基线) + add_todo(若干具体待办) + add_schedule(每周重复运动提醒) 组合）；3) 结束时用一两句中文总结计划。写操作会先经用户确认再执行，你只管返回工具调用。重复提醒用 add_schedule 的 rrule/rruleDays 参数。';
-    const msgs=[{role:'system',content:sys},{role:'user',content:text}];
-    const actions=[];let reply='';
-    try{
-      for(let round=0;round<6;round++){
-        const r=await this.callLLM(msgs);
-        if(r&&r.toolCalls&&r.toolCalls.length){
-          msgs.push(r.rawAssistant);
-          for(const tc of r.toolCalls){
-            let args={};try{args=JSON.parse(tc.argsJson||'{}')}catch(e){}
-            const tool=Skills.allTools().find(x=>x.id===tc.name);
-            if(tool&&tool.readOnly){const res=Skills.dispatch(tc.name,args);msgs.push(this._toolMsg(tc.id,String(res.ok?res.result:res.error)))}
-            else{actions.push({tool:tc.name,args});msgs.push(this._toolMsg(tc.id,'已加入执行计划，等待用户确认'))}
-          }
-        }else{reply=(r&&r.content)||'已完成规划。';break}
-      }
-      const lm=hist.find(m=>m._lk===lk);if(lm)lm.role='system-skip';
-      hist.push({role:'plan',id:U.uid(),reply,actions,status:actions.length?'pending':'empty',ts:Date.now()});
-      Store.save();M.chat._refreshChats();
-    }catch(e){
-      const lm=hist.find(m=>m._lk===lk);if(lm){lm.content='⚠ 规划失败：'+e.message+'（已回退本地规则识别）';delete lm._lk}
-      Store.save();M.chat._refreshChats();
-      M.chat.handleAgent(text,{...opts,skipPlan:true});
-    }
+/* ===== LLMAdapter：协议差异全封装（Phase 0.2）=====
+   AgentLoop 只处理统一的 {content, toolCalls} 事件，协议细节全在这：
+   - OpenAI：tool 消息带 tool_call_id（宽松）
+   - Anthropic：tool_result 必须紧跟 assistant 的 tool_use，相邻同 role 消息要合并（严格）
+   循环是协议无关的，差异被推到边缘——新增 Provider 只改这里 */
+const LLMAdapter={
+  async chat(msgs,opts){
+    opts=opts||{};const cfg=Store.data.aiConfig||{};
+    if(cfg.provider==='anthropic')return this._anthropic(msgs,cfg,opts);
+    return this._openai(msgs,cfg,opts);
   },
-  _toolMsg(id,content){const cfg=Store.data.aiConfig||{};if(cfg.provider==='anthropic'){return{role:'user',content:[{type:'tool_result',tool_use_id:id,content:String(content)}]}}return{role:'tool',tool_call_id:id,content:String(content)}},
-  async callLLM(msgs){const cfg=Store.data.aiConfig||{};if(cfg.provider==='anthropic')return this._anthropic(msgs,cfg);return this._openai(msgs,cfg)},
-  async _openai(msgs,cfg){
-    const r=await fetch(cfg.apiUrl,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(cfg.apiKey||'')},body:JSON.stringify({model:cfg.model||'gpt-4o-mini',messages:msgs,tools:Skills.openaiTools(),tool_choice:'auto',max_tokens:1500})});
+  /* 工具结果消息（协议相关，必须放这） */
+  toolMsg(id,content){const cfg=Store.data.aiConfig||{};if(cfg.provider==='anthropic'){return{role:'user',content:[{type:'tool_result',tool_use_id:id,content:String(content)}]}}return{role:'tool',tool_call_id:id,content:String(content)}},
+  async _openai(msgs,cfg,opts){
+    const body={model:cfg.model||'gpt-4o-mini',messages:msgs,max_tokens:opts.maxTokens||1500};
+    if(!opts.noTools){body.tools=Skills.openaiTools();body.tool_choice='auto'}
+    const r=await fetch(cfg.apiUrl,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(cfg.apiKey||'')},body:JSON.stringify(body),signal:opts.signal});
     if(!r.ok)throw new Error('API '+r.status+' '+(await r.text()).slice(0,80));
     const j=await r.json();const m=j.choices[0].message;
     const toolCalls=(m.tool_calls||[]).map(tc=>({id:tc.id,name:tc.function.name,argsJson:tc.function.arguments}));
-    return{content:m.content,toolCalls,rawAssistant:m};
+    let content=m.content||'';
+    if(j.choices&&j.choices[0]&&j.choices[0].finish_reason==='length')content+='\n\n⚠ 回复达到长度上限已截断（建议把需求拆小再问）。';
+    return{content,toolCalls,rawAssistant:m};
   },
-  async _anthropic(msgs,cfg){
+  async _anthropic(msgs,cfg,opts){
     const sys=(msgs.find(m=>m.role==='system')||{}).content||'';
     const conv=[];msgs.filter(m=>m.role!=='system').forEach(m=>{
       if(m.role==='tool'){conv.push({role:'user',content:[{type:'tool_result',tool_use_id:m.tool_call_id,content:String(m.content)}]})}
@@ -1261,13 +1239,159 @@ const Agent={
     });
     const merged=[];conv.forEach(m=>{const last=merged[merged.length-1];if(last&&last.role===m.role&&Array.isArray(last.content)&&Array.isArray(m.content))last.content=last.content.concat(m.content);else merged.push(m)});
     const url=(cfg.apiUrl&&cfg.apiUrl.indexOf('/messages')>=0)?cfg.apiUrl:'https://api.anthropic.com/v1/messages';
-    const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','x-api-key':cfg.apiKey||'','anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:cfg.model||'claude-sonnet-4-20250514',system:sys,tools:Skills.anthropicTools(),messages:merged,max_tokens:1500})});
+    const body={model:cfg.model||'claude-sonnet-4-20250514',system:sys,messages:merged,max_tokens:opts.maxTokens||1500};
+    if(!opts.noTools)body.tools=Skills.anthropicTools();
+    const r=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','x-api-key':cfg.apiKey||'','anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify(body),signal:opts.signal});
     if(!r.ok)throw new Error('API '+r.status+' '+(await r.text()).slice(0,80));
     const j=await r.json();
-    const blocks=j.content||[];const text=blocks.filter(b=>b.type==='text').map(b=>b.text).join('');
+    const blocks=j.content||[];let text=blocks.filter(b=>b.type==='text').map(b=>b.text).join('');
     const toolCalls=blocks.filter(b=>b.type==='tool_use').map(b=>({id:b.id,name:b.name,argsJson:JSON.stringify(b.input||{})}));
+    if(j.stop_reason==='max_tokens')text+='\n\n⚠ 回复达到长度上限已截断（建议把需求拆小再问）。';
     const rawAssistant={role:'assistant',content:text,tool_calls:toolCalls.map(tc=>({id:tc.id,function:{name:tc.name,arguments:tc.argsJson}}))};
     return{content:text,toolCalls,rawAssistant};
+  }
+};
+
+/* ===== ToolPipeline：before(权限) → execute → after(格式化)（Phase 0.2）
+   P0 行为对齐 v0.6.1：readOnly 自动执行喂真实结果；写操作入计划卡待确认。
+   钩子已留好——P1 挂权限分级、P3 挂外部 ToolPkg/MCP 时循环本体不用改。
+   修复了一个隐性 bug：v0.6.1 中未注册工具会误入计划卡（tool&&tool.readOnly 为 false），
+   现在未注册工具直接返回错误喂回模型。 */
+const ToolPipeline={
+  run(fn,args,ctx){
+    ctx=ctx||{};
+    const tool=Skills.allTools().find(x=>x.id===fn);
+    if(!tool)return{ok:false,pending:false,error:'工具「'+fn+'」未注册'};
+    /* before：权限检查（P0 只分读写；P1 挂三级权限） */
+    if(!tool.readOnly)return{ok:true,pending:true,result:'已加入执行计划，等待用户确认'};
+    /* execute */
+    const r=Skills.dispatch(fn,args);
+    /* after：统一返回结构 */
+    return{ok:r.ok,pending:false,result:r.ok?r.result:r.error};
+  }
+};
+
+/* ===== AgentLoop：健壮循环引擎（Phase 0.2）
+   替代 v0.6.1 的 6 轮硬循环。三重终止保险：
+   ① maxRounds（默认 10）② 重复调用指纹检测 ③ abort() 外部中断
+   中断语义（DSH 合成结果思路的简化版）：
+   - LLM 请求中 abort → AbortError 捕获，返回 aborted=true
+   - 工具执行中 → 已入队的动作保留，未执行的不会幻觉"已执行" */
+const AgentLoop={
+  config:{maxRounds:10,repeatLimit:3},
+  active:null,
+  async run(text,opts){
+    opts=opts||{};const cfg={...this.config,...(opts.config||{})};
+    const ac=new AbortController();
+    const st={actions:[],reply:'',aborted:false,round:0,lastCall:null,repeat:0,texts:[]};
+    this.active={ac,st};
+    /* 超时兜底：请求挂住时自动 abort（默认 90s），避免界面永远转圈 */
+    const timer=setTimeout(()=>{try{ac.abort()}catch(e){}},opts.timeoutMs||90000);
+    const sys=opts.sys||'你是「枢」，用户的生活规划 agent。今天是 '+U.today()+'。工作流程：1) 先调用 query_summary 了解用户现状；2) 根据需求调用多个工具完成跨模块拆解；3) 结束时用一两句中文总结计划。写操作会先经用户确认再执行，你只管返回工具调用。';
+    const msgs=[{role:'system',content:sys},{role:'user',content:text}];
+    try{
+      for(;st.round<cfg.maxRounds;st.round++){
+        if(st.aborted)break;
+        const r=await LLMAdapter.chat(msgs,{signal:ac.signal,maxTokens:opts.maxTokens});
+        if(r&&r.toolCalls&&r.toolCalls.length){
+          /* 累积每轮文本：模型常「说一句→调工具→再说→再调」，中间文本不能丢 */
+          if(r.content)st.texts.push(r.content);
+          msgs.push(r.rawAssistant);
+          for(const tc of r.toolCalls){
+            /* 重复调用检测：连续 N 次相同 tool+args 指纹 → 强制终止（防模型死循环） */
+            const fp=tc.name+'|'+String(tc.argsJson||'');
+            if(st.lastCall===fp){st.repeat++}else{st.repeat=0;st.lastCall=fp}
+            if(st.repeat>=cfg.repeatLimit){
+              st.texts.push('检测到重复调用工具「'+tc.name+'」已自动停止。建议换个方式描述需求，或检查之前的执行结果。');
+              st.aborted=true;break;
+            }
+            let args={};try{args=JSON.parse(tc.argsJson||'{}')}catch(e){}
+            const res=ToolPipeline.run(tc.name,args);
+            if(res.pending){st.actions.push({tool:tc.name,args});msgs.push(LLMAdapter.toolMsg(tc.id,res.result))}
+            else{msgs.push(LLMAdapter.toolMsg(tc.id,String(res.ok?res.result:res.error)))}
+          }
+          if(st.aborted)break;
+        }else{
+          if(r&&r.content)st.texts.push(r.content);
+          st.reply=(r&&r.content)||'';break;
+        }
+      }
+      /* 兜底总结：模型调了工具但没给收尾文本时，用实际动作动态生成，绝不硬编码空泛文案 */
+      let reply=st.texts.join('\n\n')||st.reply;
+      if(!reply&&st.actions.length){
+        const labels=st.actions.map(a=>M.chat&&M.chat.toolLabel?M.chat.toolLabel(a.tool):a.tool);
+        reply='已为你规划 '+st.actions.length+' 项操作：'+labels.join('、')+'。请确认后执行。';
+      }
+      return{reply,actions:st.actions,aborted:st.aborted,rounds:st.round};
+    }catch(e){
+      if(e&&(e.name==='AbortError'||ac.signal.aborted)){st.aborted=true;const reply=st.texts.join('\n\n');return{reply:reply||'⏱ 请求超时或被中断，请重试。',actions:st.actions,aborted:true,rounds:st.round}}
+      throw e;
+    }finally{clearTimeout(timer);this.active=null}
+  },
+  abort(){const a=this.active;if(a){a.st.aborted=true;try{a.ac.abort()}catch(e){}}}
+};
+
+/* ===== Agent 编排层：意图路由 + 委托 AgentLoop（薄壳，Phase 0.2）
+   简单意图走本地规则（0 token）；规划类意图走 AgentLoop（LLM function calling） */
+const Agent={
+  PLAN_RE:/减.{0,4}(重|斤|kg)|增(重|肌)|瘦身|减肥|计划|规划|拆解|帮我安排|目标|存钱|攒钱|攒下|养成.{0,8}习惯|提醒我|监督我|自律|坚持|估算|热量|写入|记录到|记到|添加到|更新到|同步到|帮我.{0,8}(?:算|估算|记录|记|写|整理|安排|规划|拆解|制定|生成|创建|设置)/,
+  isPlanning(t){return this.PLAN_RE.test(t||'')},
+  _VALID_INTENTS:['record_meal','record_water','record_exercise','record_stretch','record_sleep','record_weight','record_expense','record_schedule','record_todo','record_beauty','plan','chat','ask'],
+  /* B：LLM 意图分类主通道 —— schema 约束 JSON 输出，分类失败/无 API 时调用方落回正则 */
+  async understand(text){
+    const cfg=Store.data.aiConfig||{};
+    if(!cfg.apiKey)return{engine:'regex'};
+    const sys='你是「枢」生活工作台的意图分类器。将用户的中文输入归为下列 intent 之一：\n'+
+      '- record_meal：记录饮食（吃了什么，含"帮我估算热量"类需求）\n- record_water：饮水/饮品（水、咖啡、茶、果汁、牛奶，带量）\n'+
+      '- record_exercise：运动（跑步/健身/瑜伽/骑行/游泳，含时长）\n- record_stretch：拉伸/按摩/冥想\n'+
+      '- record_sleep：睡眠/熬夜/起床\n- record_weight：体重记录\n- record_expense：记账/支出/收入\n'+
+      '- record_schedule：日程（会议/课程/截止/约会，带时间）\n- record_todo：待办/提醒/要做某事\n'+
+      '- record_beauty：护肤/美容\n'+
+      '- plan：需要多步骤规划拆解的任务（减重/增肌/存钱/习惯养成/帮我安排/制定计划/帮我建立…规划）\n'+
+      '- chat：问候/闲聊/提问/无法归类的输入（如 test、嗯、你好、这是什么）\n\n'+
+      '严格只输出一个 JSON 对象，不要任何其他文字。schema：\n'+
+      '{"intent":"上述之一","items":[{"字段":"随 intent 而定的记录字段"}],"date":"YYYY-MM-DD","time":"HH:MM","note":"简短说明"}\n\n'+
+      'items 字段约定：meal→{name,calories,mealType:breakfast|lunch|dinner|snack}；water→{amount(ml),note}；exercise→{name,duration(分钟),calories}；'+
+      'stretch→{type,duration}；sleep→{hours,quality(1-5)}；weight→{weight(kg)}；expense→{type:expense|income,amount,category,note}；'+
+      'schedule→{title,startTime,endTime,category}；todo→{title,priority:low|mid|high}；beauty→{type,duration}。\n'+
+      'date 按输入推断（"昨天/明天"等），无则今天。plan 和 chat 的 items 输出空数组。';
+    const ac=new AbortController();const timer=setTimeout(()=>ac.abort(),25000);
+    try{
+      const r=await LLMAdapter.chat([{role:'system',content:sys},{role:'user',content:text}],{maxTokens:500,noTools:true,signal:ac.signal});
+      const content=(r&&r.content)||'';
+      const m=content.match(/\{[\s\S]*\}/);
+      if(!m)return{engine:'regex',error:'no-json'};
+      const j=JSON.parse(m[0]);
+      let intent=String(j.intent||'chat').toLowerCase().trim().replace(/[\s-]+/g,'_');
+      if(!this._VALID_INTENTS.includes(intent))intent='chat';
+      return{engine:'llm',intent,items:Array.isArray(j.items)?j.items:[],date:j.date||U.today(),time:j.time||'',note:j.note||''};
+    }catch(e){
+      if((e&&e.name==='AbortError')||ac.signal.aborted)return{engine:'regex',error:'timeout'};
+      return{engine:'regex',error:(e&&e.message)||'llm-error'};
+    }finally{clearTimeout(timer)}
+  },
+  _refreshMods(){['dashboard','goals','todo','schedule','fitness','wellness','finance'].forEach(k=>{try{const el=document.getElementById('m-'+k);if(el&&M[k]&&typeof M[k].render==='function')M[k].render()}catch(e){}})},
+  async plan(text,opts){
+    opts=opts||{};const d=Store.data,hist=d.chatHistory||(d.chatHistory=[]);
+    const lk='plan-'+Date.now();hist.push({role:'assistant',content:'🧠 正在规划（调用工具中）…',_lk:lk,ts:Date.now()});Store.save();M.chat._refreshChats();
+    const sys='你是「枢」，用户的生活规划 agent。今天是 '+U.today()+'。工作流程：1) 先调用 query_summary 了解用户现状；2) 根据需求调用多个工具完成跨模块拆解（例：用户要减重15斤 → create_goal(weight) + add_weight(基线) + add_todo(若干具体待办) + add_schedule(每周重复运动提醒) 组合）；3) 结束时用一两句中文总结计划。写操作会先经用户确认再执行，你只管返回工具调用。重复提醒用 add_schedule 的 rrule/rruleDays 参数：每周一 → rrule:"weekly"+rruleDays:[1]，持续N周再传 count:N（如 count:10 = 每周一次共10周）。';
+    try{
+      const r=await AgentLoop.run(text,{sys,maxTokens:1500});
+      const lm=hist.find(m=>m._lk===lk);if(lm)lm.role='system-skip';
+      if(r.actions.length){
+        hist.push({role:'plan',id:U.uid(),reply:r.reply,actions:r.actions,status:'pending',ts:Date.now()});
+      }else if(r.aborted){
+        hist.push({role:'assistant',content:r.reply||'⏱ 请求超时或被中断，请重试。',ts:Date.now()});
+      }else{
+        /* LLM 纯文本回复（无工具调用）= 对话消息，直接以 md 渲染展示 */
+        hist.push({role:'assistant',content:r.reply||'已完成。',ts:Date.now()});
+      }
+      Store.save();M.chat._refreshChats();
+    }catch(e){
+      const lm=hist.find(m=>m._lk===lk);if(lm){lm.content='⚠ 规划失败：'+e.message+'（已回退本地规则识别）';delete lm._lk}
+      Store.save();M.chat._refreshChats();
+      M.chat.handleAgent(text,{...opts,skipPlan:true});
+    }
   },
   async executePlan(id){
     const d=Store.data;const hist=d.chatHistory||[];const p=hist.find(m=>m.id===id&&m.role==='plan');if(!p||p.status!=='pending')return;
@@ -1283,11 +1407,55 @@ const Agent={
 M.chat={
 genContext(){const t=U.today(),d=Store.data;let c=`今日数据摘要（${t}）：\n`;const ex=d.transactions.filter(x=>x.date===t&&x.type==='expense');if(ex.length)c+=`- 支出：${U.money(ex.reduce((s,e)=>s+e.amount,0))}（${ex.length}笔）\n`;const ms=d.meals.filter(m=>m.date===t);if(ms.length)c+=`- 摄入：${ms.reduce((s,m)=>s+m.calories,0)}kcal\n`;const el=d.exerciseLog.filter(e=>e.date===t);if(el.length)c+=`- 运动：${el.length}项，消耗${el.reduce((s,e)=>s+(e.calories||0),0)}kcal\n`;const sl=d.sleep.find(s=>s.date===t);if(sl)c+=`- 睡眠：${sl.hours}h，质量${sl.quality}/5\n`;const td=d.todos.filter(x=>!x.done);if(td.length)c+=`- 待办：${td.length}项未完成\n`;return c||'暂无今日数据'},
 
-/* hybrid 识别：默认规则；如配置了 LLM，且置信度低，则二次请求 LLM */
+/* 可记录的 intent 白名单（LLM 分类结果映射到 applyAgent 分支） */
+_recTargets:{meal:1,water:1,exercise:1,stretch:1,sleep:1,weight:1,expense:1,schedule:1,todo:1,beauty:1},
+/* 纯对话链路：LLM 闲聊回复（不带工具），md 渲染 */
+async handleChat(text){
+  const d=Store.data;const hist=d.chatHistory||(d.chatHistory=[]);
+  const lk='chat-'+Date.now();
+  hist.push({role:'assistant',content:'💬 正在思考…',_lk:lk,ts:Date.now()});Store.save();this._refreshChats();
+  const ac=new AbortController();const timer=setTimeout(()=>ac.abort(),30000);
+  try{
+    const sys='你是「枢」，俪宁的个人生活 agent。今天是 '+U.today()+'。用简体中文简洁自然地回复。可以用 markdown 排版但不要太长。如果用户输入像是想记录点什么但你没把握分类，直接问一句确认。';
+    const r=await LLMAdapter.chat([{role:'system',content:sys},{role:'user',content:text}],{maxTokens:800,noTools:true,signal:ac.signal});
+    const lm=hist.find(m=>m._lk===lk);if(lm)lm.role='system-skip';
+    hist.push({role:'assistant',content:(r&&r.content)||'（空回复）',ts:Date.now()});
+    Store.save();this._refreshChats();
+  }catch(e){
+    const lm=hist.find(m=>m._lk===lk);if(lm){lm.content='⚠ 对话失败：'+(e&&e.name==='AbortError'?'请求超时':((e&&e.message)||'未知错误'));delete lm._lk}
+    Store.save();this._refreshChats();
+  }
+},
+/* B：LLM 意图分类主通道；无 API / 分类失败 → 正则兜底 */
 async handleAgent(text,opts){
   opts=opts||{};
   const cfg0=Store.data.aiConfig||{};
   if(!opts.skipPlan&&cfg0.apiKey&&Agent.isPlanning(text)){Agent.plan(text,opts);return}
+  /* 配了 API → 优先 LLM 意图分类 */
+  if(cfg0.apiKey&&!opts.forceRegex){
+    const hist=Store.data.chatHistory||(Store.data.chatHistory=[]);
+    const lk='und-'+Date.now();
+    hist.push({role:'assistant',content:'🧠 正在识别…',_lk:lk,ts:Date.now()});Store.save();this._refreshChats();
+    let u=null;
+    try{u=await Agent.understand(text)}catch(e){u={engine:'regex'}}
+    const tmp=hist.find(m=>m._lk===lk);if(tmp)tmp.role='system-skip';
+    if(u&&u.engine==='llm'){
+      const intent=u.intent;
+      if(intent==='plan'){Store.save();Agent.plan(text,opts);return}
+      if(intent==='chat'||intent==='ask'){Store.save();this.handleChat(text);return}
+      const key=intent.indexOf('record_')===0?intent.slice(7):null;
+      if(key&&this._recTargets[key]){
+        const userIdx=opts.userMsgIdx!==undefined?opts.userMsgIdx:hist.length-1;
+        const items=(u.items&&u.items.length)?u.items:[{}];
+        const parsed={intent:key,items,date:u.date||U.today(),time:u.time||'',raw:text,tags:[],confidence:'high'};
+        hist.push({role:'parsed',content:text,parsed,idx:userIdx+1,ts:Date.now()});
+        Store.save();
+        M.chat._refreshChats();
+        return;
+      }
+    }
+    /* 分类失败 / 非法 intent → 落回正则 */
+  }
   const parsed=U.agentParse(text);
   if(!parsed){return}
   const d=Store.data;
@@ -1310,35 +1478,44 @@ async handleAgent(text,opts){
   }
   hist.push(ent);
   Store.save();
-  /* 更新 sheet + m-chat 视图 */
-  if(UI.agent._renderMsgs)UI.agent._renderMsgs();
-  const mc=document.getElementById('chat-msgs');if(mc){mc.innerHTML=this._renderChatMsgs();mc.scrollTop=mc.scrollHeight}
-  if(parsed.confidence==='low'){/* 低置信度还弹老 modal 引导用户修正 */
+  /* 更新 m-chat 视图 */
+  M.chat._refreshChats();
+  if(parsed.confidence==='low'){/* 低置信度弹 modal 引导用户修正 */
     this._modalLowConfidence(parsed);
-  }else if(opts.stayInSheet){
-    UI.agent.openSheet();
   }
 },
 
 _modalLowConfidence(p){
   UI.modal(`<div class="modal-head"><div class="modal-title">我没听明白</div><button class="modal-close" onclick="UI.closeModal()">${I.close}</button></div><div style="font-size:.88rem;line-height:1.7;white-space:pre-wrap;color:var(--text-2)">${U.esc(p.note||'请描述更具体些')}</div><div style="margin-top:14px"><div style="font-size:.78rem;color:var(--text-3);margin-bottom:6px">或者直接选：</div><div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px"><button class="btn btn-ghost" onclick="UI.closeModal();M.chat.quickCmd('meal')">记饮食</button><button class="btn btn-ghost" onclick="UI.closeModal();M.chat.quickCmd('exercise')">记运动</button><button class="btn btn-ghost" onclick="UI.closeModal();M.chat.quickCmd('water')">记饮水</button><button class="btn btn-ghost" onclick="UI.closeModal();M.chat.quickCmd('sleep')">记睡眠</button><button class="btn btn-ghost" onclick="UI.closeModal();M.chat.quickCmd('schedule')">建日程</button><button class="btn btn-ghost" onclick="UI.closeModal();M.chat.quickCmd('todo')">建待办</button></div></div>`);
 },
-quickCmd(t){UI.agent.openSheet();setTimeout(()=>{const i=document.getElementById('agent-sheet-input');if(i){i.value='_'+t;UI.toast('选择类型已就位，请补充细节','info')}},50)},
+quickCmd(t){UI.nav('chat');setTimeout(()=>{const i=document.getElementById('chat-input');if(i){i.value='_'+t;UI.toast('选择类型已就位，请补充细节','info')}},50)},
 
 _refreshChats(){if(UI.agent._renderMsgs)UI.agent._renderMsgs();const mc=document.getElementById('chat-msgs');if(mc){mc.innerHTML=this._renderChatMsgs();mc.scrollTop=mc.scrollHeight}},
 toolLabel(fn){const map={'life__create_goal':'🎯 创建目标','life__add_weight':'⚖️ 记录体重','life__add_meal':'🍱 记录饮食','life__add_exercise':'🏃 记录运动','life__add_water':'💧 记录饮水','life__add_sleep':'💤 记录睡眠','life__add_stretch':'🧘 拉伸/按摩','life__add_beauty':'✨ 护肤','life__add_meditation':'🌿 冥想','life__add_todo':'✓ 创建待办','life__add_schedule':'📅 创建日程','life__add_transaction':'💰 记账'};return map[fn]||fn},
 _planCard(m){
-  if(m.status==='done'){const r=m.result||{};return `${m.reply?`<div class="chat-msg bot">${U.esc(m.reply)}</div>`:''}<div class="chat-msg sys">✅ 计划已执行 · ${(r.results||[]).join(' · ')}</div>`}
+  if(m.status==='done'){
+    const r=m.result||{};
+    const rs=r.results||[];
+    /* 已执行：展示每个动作 + 参数，让用户明确知道"规划了什么、落在哪"；按结果标记成功/失败 */
+    const acts=(m.actions||[]).map((a,i)=>{
+      const pv=Object.entries(a.args||{}).slice(0,4).map(([k,v])=>k+'='+String(v)).join(' · ');
+      const st=(rs[i]||'').includes('❌')?'❌':'✅';
+      return `<div style="padding:3px 0;font-size:.78rem">${st} ${this.toolLabel(a.tool)}${pv?` <span style="color:var(--text-3)">${U.esc(pv)}</span>`:''}</div>`;
+    }).join('');
+    const nFail=rs.filter(x=>x.includes('❌')).length;
+    const stat=`<div style="margin-top:4px;font-size:.76rem;color:var(--text-3)">共 ${rs.length} 项 · ${rs.length-nFail} 成功${nFail?` · ${nFail} 失败`:''}</div>`;
+    return `<div class="chat-msg bot"><b>✅ 已执行规划（${(m.actions||[]).length} 项操作）</b><div style="margin-top:4px">${acts}</div>${stat}${m.reply?`<div style="margin-top:6px;font-size:.82rem;color:var(--text-2);line-height:1.6;border-top:1px dashed var(--border);padding-top:6px">${U.md(m.reply)}</div>`:''}</div>`;
+  }
   if(m.status==='dropped')return `<div class="chat-msg sys">已取消该计划</div>`;
-  if(m.status==='empty')return `<div class="chat-msg bot">${U.esc(m.reply||'未产生可执行的操作')}</div>`;
+  if(m.status==='empty')return `<div class="chat-msg bot">${U.md(m.reply||'未产生可执行的操作')}</div>`;
   const acts=(m.actions||[]).map(a=>{const pv=Object.entries(a.args||{}).slice(0,3).map(([k,v])=>k+'='+String(v)).join(' · ');return `<div style="padding:3px 0;font-size:.78rem">• ${this.toolLabel(a.tool)}${pv?` <span style="color:var(--text-3)">${U.esc(pv)}</span>`:''}</div>`}).join('');
-  return `<div class="chat-msg bot"><b>🧠 执行计划（${(m.actions||[]).length} 项操作）</b><div style="margin-top:4px">${acts}</div>${m.reply?`<div style="margin-top:6px;font-size:.8rem;color:var(--text-2);line-height:1.6">${U.esc(m.reply)}</div>`:''}<div style="display:flex;gap:6px;margin-top:8px"><button class="btn btn-primary btn-sm" onclick="Agent.executePlan('${m.id}')">确认执行</button><button class="btn btn-ghost btn-sm" onclick="Agent.dropPlan('${m.id}')">取消</button></div></div>`;
+  return `<div class="chat-msg bot"><b>🧠 执行计划（${(m.actions||[]).length} 项操作）</b><div style="margin-top:4px">${acts}</div>${m.reply?`<div style="margin-top:6px;font-size:.8rem;color:var(--text-2);line-height:1.6">${U.md(m.reply)}</div>`:''}<div style="display:flex;gap:6px;margin-top:8px"><button class="btn btn-primary btn-sm" onclick="Agent.executePlan('${m.id}')">确认执行</button><button class="btn btn-ghost btn-sm" onclick="Agent.dropPlan('${m.id}')">取消</button></div></div>`;
 },
 
 applyAgent(idx){const d=Store.data;const hist=d.chatHistory;const msg=hist.find(m=>m.idx===+idx&&m.role==='parsed');if(!msg)return;
   const p=msg.parsed;
   /* 主路由（primary intent 引导到对应模块） */
-  const targetModules={meal:'fitness',exercise:'fitness',stretch:'wellness',sleep:'wellness',water:'wellness',schedule:'schedule',todo:'todo'};
+  const targetModules={meal:'fitness',exercise:'fitness',stretch:'wellness',sleep:'wellness',water:'wellness',weight:'fitness',expense:'finance',beauty:'wellness',schedule:'schedule',todo:'todo'};
   let count=0;
   /* 跨意图二次同步：如 water 带 beverage 标记（来自"喝养生茶"），已自动加 meal snack item */
   p.items.forEach(it=>{
@@ -1348,6 +1525,9 @@ applyAgent(idx){const d=Store.data;const hist=d.chatHistory;const msg=hist.find(
     else if(intent==='stretch'){d.stretching.push({id:U.uid(),type:it.type||'拉伸',duration:it.duration||15,date:p.date});count++}
     else if(intent==='sleep'){const i=d.sleep.findIndex(x=>x.date===p.date);if(i>=0)d.sleep[i]={...d.sleep[i],...it,date:p.date,bedtime:d.sleep[i].bedtime||'23:30',wakeTime:d.sleep[i].wakeTime||'07:00'};else d.sleep.push({id:U.uid(),hours:it.hours,quality:it.quality||3,bedtime:'23:30',wakeTime:'07:00',date:p.date});count++}
     else if(intent==='water'){d.water.push({id:U.uid(),amount:it.amount||250,date:p.date,note:it.note||''});count++}
+    else if(intent==='weight'){d.weights.push({id:U.uid(),weight:+it.weight,date:p.date});count++}
+    else if(intent==='expense'){d.transactions.push({id:U.uid(),type:it.type==='income'?'income':'expense',amount:+it.amount,category:it.category||'其他',note:it.note||'',date:p.date});count++}
+    else if(intent==='beauty'){d.beauty.push({id:U.uid(),type:it.type||'护肤',duration:it.duration||10,date:p.date});count++}
     else if(intent==='schedule'){d.schedule.push({id:U.uid(),title:it.title,date:p.date,startTime:it.startTime||'09:00',endTime:it.endTime||'',category:it.category||'life',note:it.note||''});count++}
     else if(intent==='todo'){d.todos.push({id:U.uid(),title:it.title,priority:it.priority||'mid',done:false,dueDate:p.date,category:it.category||''});count++}
   });
@@ -1356,7 +1536,7 @@ applyAgent(idx){const d=Store.data;const hist=d.chatHistory;const msg=hist.find(
   /* parsed 改成 system-skip 隐藏 */
   msg.role='system-skip';
   Store.save();
-  UI.toast(`已写入 ${count} 条到「${({meal:'健身',exercise:'健身',stretch:'养生',sleep:'养生',water:'养生',schedule:'日程',todo:'待办'})[p.intent]||p.intent}」`,'success');
+  UI.toast(`已写入 ${count} 条到「${({meal:'健身',exercise:'健身',stretch:'养生',sleep:'养生',water:'养生',weight:'健身',expense:'记账',beauty:'养生',schedule:'日程',todo:'待办'})[p.intent]||p.intent}」`,'success');
   if(UI.agent._renderMsgs)UI.agent._renderMsgs();
   const mc=document.getElementById('chat-msgs');if(mc){mc.innerHTML=this._renderChatMsgs();mc.scrollTop=mc.scrollHeight}
   /* 渲染目标模块（如果当前在 sheet 覆盖，刷新对应模块缓存数据即可） */
@@ -1389,7 +1569,7 @@ _renderChatMsgs(){const d=Store.data;const msgs=d.chatHistory||[];let html='';if
     if(m.role==='user'){html+=`<div class="chat-msg user">${U.esc(m.content||'')}</div>`;return}
     if(m.role==='parsed'){
       const p=m.parsed||{};
-      const labels={meal:'饮食记录',exercise:'运动记录',stretch:'拉伸/按摩',sleep:'睡眠',water:'饮水',schedule:'日程',todo:'待办',note:'备注',multi:'多意图合并'};
+      const labels={meal:'饮食记录',exercise:'运动记录',stretch:'拉伸/按摩',sleep:'睡眠',water:'饮水',weight:'体重',expense:'记账',beauty:'护肤',schedule:'日程',todo:'待办',note:'备注',multi:'多意图合并'};
       const items=(p.items||[]).map(it=>{
         const i=it.intent||p.intent;
         if(i==='meal')return`🍱 ${it.name||''} · ${it.calories||0}kcal`;
@@ -1397,6 +1577,9 @@ _renderChatMsgs(){const d=Store.data;const msgs=d.chatHistory||[];let html='';if
         if(i==='stretch')return`🧘 ${it.type||'拉伸'} · ${it.duration||0}min`;
         if(i==='sleep')return`💤 ${it.hours||0}h`;
         if(i==='water')return`💧 ${it.amount||0}ml${it.note?(' · '+it.note):''}`;
+        if(i==='weight')return`⚖️ ${it.weight||0}kg`;
+        if(i==='expense')return`💰 ${it.type==='income'?'收入':'支出'} ${it.amount||0}${it.category?(' · '+it.category):''}`;
+        if(i==='beauty')return`✨ ${it.type||'护肤'} · ${it.duration||0}min`;
         if(i==='schedule')return`📅 ${it.title||''} · ${it.startTime||''}`;
         if(i==='todo')return`✓ ${it.title||''}`;
         return'';
@@ -1405,14 +1588,14 @@ _renderChatMsgs(){const d=Store.data;const msgs=d.chatHistory||[];let html='';if
       return;
     }
     if(m.role==='applied'){html+=`<div class="chat-msg sys">✅ 已写入 ${m.count} 条到「${m.target}」 · ${U.fmtDF(m.date)}</div>`;return}
-    if(m.role==='assistant'){html+=`<div class="chat-msg bot">${U.esc(m.content)}</div>`;return}
+    if(m.role==='assistant'){html+=`<div class="chat-msg bot">${U.md(m.content)}</div>`;return}
   });
   return html;
 },
 
 render(){const d=Store.data;const cfg=d.aiConfig;const msgs=d.chatHistory||[];
-  document.getElementById('m-chat').innerHTML=`<div class="page-header"><div><div class="page-title">AI 对话</div><div class="page-sub">${cfg.apiKey?('已配置 '+(cfg.provider==='anthropic'?'Claude':'OpenAI兼容')+' · 简单记录走本地规则，规划走 Function Calling'):'未配置API — 简单记录可用（本地规则），规划需配置（点右上角设置）'}</div></div><div style="display:flex;gap:6px"><button class="btn btn-ghost btn-sm" onclick="UI.agent.openSheet()">浮动聊天</button><button class="btn btn-ghost btn-sm" onclick="M.chat.showConfig()">设置</button></div></div>
-${!cfg.apiKey?`<div class="chat-config"><div style="font-size:.85rem;color:var(--text-2);margin-bottom:8px">配置大模型 API 后，可用于 (1) 模糊意图的二次识别 (2) 对话式问答。 支持 OpenAI 兼容接口。</div><button class="btn btn-primary btn-sm" onclick="M.chat.showConfig()">配置 API</button></div>`:''}
+  document.getElementById('m-chat').innerHTML=`<div class="page-header"><div><div class="page-title">AI 对话</div><div class="page-sub">${cfg.apiKey?('已配置 '+(cfg.provider==='anthropic'?'Claude':'OpenAI兼容')+' · LLM 意图识别：记录直达 · 规划走 Function Calling · 闲聊直接对话'):'未配置API — 本地规则识别（简单记录可用），配置后解锁 LLM 意图识别与规划'}</div></div><div style="display:flex;gap:6px"><button class="btn btn-ghost btn-sm" onclick="M.chat.showConfig()">设置</button></div></div>
+${!cfg.apiKey?`<div class="chat-config"><div style="font-size:.85rem;color:var(--text-2);margin-bottom:8px">配置大模型 API 后，输入将走 LLM 意图识别：(1) 记录类直达确认卡 (2) 规划类自动拆解任务 (3) 闲聊直接对话。支持 OpenAI 兼容接口与 Anthropic。</div><button class="btn btn-primary btn-sm" onclick="M.chat.showConfig()">配置 API</button></div>`:''}
 <div class="chat-wrap"><div class="chat-msgs" id="chat-msgs">${this._renderChatMsgs()}</div><div class="chat-input-row"><textarea id="chat-input" placeholder="输入消息，回车发送，Shift+回车换行…" rows="2" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();UI.agent.commit(this.value);this.value=''}"></textarea></div></div>`;
   const cm=document.getElementById('chat-msgs');if(cm)cm.scrollTop=cm.scrollHeight;
   /* 触发 agent-fab 显示更新 */
