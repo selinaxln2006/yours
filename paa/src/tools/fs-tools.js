@@ -1,6 +1,6 @@
-/* fs-tools.js — Phase B G3 自诊断闭环工具集（v0.2：grep + 切片读 + check）
+/* fs-tools.js — Phase B G3 自诊断 + G4 自修改工具集（v0.3：+patch 手术刀替换）
    fs_read（只读自动执行，支持行区间切片）/ fs_grep（只读，正则定位）
-   fs_check（只读，node --check 语法验证）/ fs_write（写，待确认）/ shell_run（写，待确认）
+   fs_check（只读，node --check 语法验证）/ fs_patch（写，精确替换）/ fs_write（写，整体覆盖）/ shell_run（写，待确认）
    安全模型：
    - root 沙箱：所有路径解析到 root 内，越界直接拒绝
    - 大小上限：读 300KB / 写 500KB，防上下文爆炸；grep 跳过超限大文件
@@ -169,6 +169,37 @@ export function registerFsTools(skills, opts) {
             const err = ((e.stderr || '') + (e.message || '')).split('\n').slice(0, 6).join('\n');
             return '❌ 语法错误：' + a.path + '\n' + err;
           }
+        }
+      },
+      {
+        name: 'patch',
+        desc: '精确替换文件中的文本片段（手术刀修改，不改全文件）。用于修改大文件中的个别行——比 fs__write 整体覆盖安全得多。old_str 必须在文件中唯一出现，否则拒绝执行（提供更多上下文行消除歧义）。修改前先用 fs__read 读取目标行确认原文。可连续调用多次做多处替换。',
+        readOnly: false,
+        risk: 'high',
+        params: { type: 'object', properties: {
+          path: { type: 'string', description: '相对工作区根目录的文件路径' },
+          old_str: { type: 'string', description: '要替换的原文（必须精确匹配，含缩进/空格/换行，在文件中唯一出现）。建议从 fs__read 的输出中复制。' },
+          new_str: { type: 'string', description: '替换后的新文本（与 old_str 等长或不同均可）' }
+        }, required: ['path', 'old_str', 'new_str'] },
+        handler(a) {
+          const oldStr = String(a.old_str || '');
+          const newStr = String(a.new_str || '');
+          if (!oldStr) throw new Error('old_str 为空');
+          if (oldStr === newStr) throw new Error('old_str 与 new_str 相同，无需替换');
+          const p = resolvePath(root, a.path);
+          if (!fs.existsSync(p)) throw new Error('文件不存在：' + a.path);
+          const content = fs.readFileSync(p, 'utf8');
+          /* 唯一性校验：old_str 必须在文件中恰好出现一次 */
+          let count = 0, idx = 0;
+          while ((idx = content.indexOf(oldStr, idx)) !== -1) { count++; idx += oldStr.length; }
+          if (count === 0) throw new Error('old_str 在文件中未找到。请先 fs__read 确认原文（注意缩进和空格）。');
+          if (count > 1) throw new Error('old_str 在文件中出现 ' + count + ' 次，无法确定替换位置。请加入更多上下文行使其唯一。');
+          const newContent = content.replace(oldStr, newStr);
+          if (Buffer.byteLength(newContent, 'utf8') > WRITE_MAX) throw new Error('替换后文件超过 500KB 上限');
+          fs.writeFileSync(p, newContent, 'utf8');
+          const oldPreview = oldStr.replace(/\n/g, '\\n').slice(0, 100);
+          const newPreview = newStr.replace(/\n/g, '\\n').slice(0, 100);
+          return '✅ 精确替换成功：' + a.path + '\n  替换 ' + oldStr.length + ' 字节 → ' + newStr.length + ' 字节\n  old: ' + oldPreview + '\n  new: ' + newPreview;
         }
       },
       {

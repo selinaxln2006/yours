@@ -975,13 +975,13 @@ expandRecurring(items,from,to){
     const r=s.rrule;
     const start=new Date(s.date+'T00:00:00');
     const days=(s.rruleDays||[]).map(Number);
-    const wd0=start.getDay();
+    const wd0=start.getDay()||7;
     let cur=new Date(start);
     let safety=0;
     while(cur<=until(s)&&safety++<4000){
       const ds=cur.getFullYear()+'-'+String(cur.getMonth()+1).padStart(2,'0')+'-'+String(cur.getDate()).padStart(2,'0');
       if(ds>=from&&ds<=to){
-        const wd=cur.getDay();
+        const wd=cur.getDay()||7;
         if(r==='daily')out.push({...s,_isRecurring:true,_recurringDate:ds,date:ds});
         else if(r==='weekly'&&(days.length?days.includes(wd):wd===wd0))out.push({...s,_isRecurring:true,_recurringDate:ds,date:ds});
         else if(r==='biweekly'&&wd===wd0&&Math.round((cur-start)/864e5)%14===0)out.push({...s,_isRecurring:true,_recurringDate:ds,date:ds});

@@ -75,6 +75,7 @@ const LABELS = {
   'fs__read': '📖 读取文件',
   'fs__grep': '🔍 搜索代码',
   'fs__check': '✔️ 验证语法',
+  'fs__patch': '🔧 精确替换',
   'fs__write': '✏️ 写入文件',
   'fs__shell': '⚙️ 执行命令',
   'memory__search': '🔎 搜索记忆',
@@ -129,19 +130,20 @@ async function main() {
   console.log('   记忆：' + (memInjection ? '✅ 已注入' : '⬜ 空（首次使用）'));
   console.log('   需求：' + a.query + '\n');
 
-  const sys = '你是「枢」，运行在本地文件系统上的 AI 编程助手（Phase B，G3 自诊断 + G6 记忆闭环）。今天是 ' + today() + '。' +
+  const sys = '你是「枢」，运行在本地文件系统上的 AI 编程助手（Phase B，G3 自诊断 + G4 自修改 + G6 记忆闭环）。今天是 ' + today() + '。' +
     (memInjection ? '\n\n' + memInjection + '\n\n' : '\n（暂无历史记忆，这是首次会话。）\n\n') +
     '工作流程（严格遵守，这是硬纪律）：' +
     '1) **定位优先**：先用 fs__grep 搜索关键词/正则定位相关代码行号，禁止上来就整读大文件（浪费上下文且容易漏细节）；' +
     '2) **按需精读**：用 fs__read 的 offset/limit 参数只读 grep 命中行号附近的片段（如 offset=1195 limit=30）；要了解全貌时可整读小文件；' +
     '3) **交叉验证**：结论必须引用具体「文件:行号」证据；下结论前主动检查相邻分支和调用方（grep 相关函数名/字段名确认没有遗漏场景）；' +
-    '4) **最小修改**：需要改代码时先用 fs__read 读原文件，再用 fs__write 精确改动，保留原有注释与风格；' +
-    '5) **改后必验**：每次 fs__write 修改 .js 文件后立即用 fs__check 验证语法（只读，自动执行），HTML 等文件用 fs__shell 跑 git diff；' +
-    '6) 结束时用中文总结：发现什么（附文件:行号证据）、改了什么、验证结果。' +
-    '7) **记忆固化**（硬纪律）：总结前必须调用 memory__append 记录本次关键发现和结论（只记不可推导信息：决策背景/方法论/外部链接，代码位置不存）；' +
+    '4) **最小修改**：修改已有文件优先用 fs__patch（手术刀精确替换，只改变目标片段不碰全文件）；仅新建文件用 fs__write。patch 前 fs__read 确认原文，old_str 必须唯一匹配；' +
+    '5) **改后必验**：.js 文件修改后立即用 fs__check 验证语法；HTML/CSS 等文件用 fs__shell 跑 git diff -- <file> 确认改动范围正确且无意外行被改；' +
+    '6) **回滚纪律**：若验证失败或改动有误，立即用 fs__shell 执行 git restore -- <file> 恢复原文件，报告失败原因——绝不留破代码在仓库里；' +
+    '7) 结束时用中文总结：发现什么（附文件:行号证据）、改了什么、验证结果、是否回滚。' +
+    '8) **记忆固化**（硬纪律）：总结前必须调用 memory__append 记录本次关键发现和结论（只记不可推导信息：决策背景/方法论/外部链接，代码位置不存）；' +
     '若发现值得长期保留的约定/事实，用 memory__search 检查是否已有，再提议更新 MEMORY.md（需确认）。' +
     '记忆是线索不是事实——行动前用 fs__grep/fs__read 独立验证记忆中的断言。' +
-    '写操作（fs__write / fs__shell / memory__update）会先经用户确认再执行（当前自主级 L' + cfg.autonomy.level +
+    '写操作（fs__write / fs__patch / fs__shell / memory__update）会先经用户确认再执行（当前自主级 L' + cfg.autonomy.level +
     '，memory__append 自动执行），你只管返回工具调用。';
 
   let r;
@@ -153,7 +155,7 @@ async function main() {
       config: { maxRounds: a.maxRounds },
       /* 第七步硬纪律的机械强制：提示词模型可能跳过，循环层兜底（G3 第三轮实测触发过跳过） */
       requiredTool: 'memory__append',
-      requiredReminder: '系统提醒：你尚未调用 memory__append 固化本次会话记忆（工作流程第 7 步硬纪律，不可跳过）。请立即调用 memory__append 记录本次关键发现与结论（只记不可推导信息），然后再给出最终总结。'
+      requiredReminder: '系统提醒：你尚未调用 memory__append 固化本次会话记忆（工作流程第 8 步硬纪律，不可跳过）。请立即调用 memory__append 记录本次关键发现与结论（只记不可推导信息），然后再给出最终总结。'
     });
   } catch (e) {
     console.error('❌ 规划失败：' + e.message);

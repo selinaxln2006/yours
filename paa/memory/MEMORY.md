@@ -4,7 +4,7 @@
 
 ## 架构约定
 
-- [index.html 冻结基线](details/index-freeze.md) -- v18 冻结不动，G3 诊断出的 bug 清单 = G4 自修改闭环靶子
+- [index.html G4 实战](details/index-freeze.md) -- v18 基线已解冻，G4 自修改闭环靶子（方案二止血：getDay() 归一到 1-7）
 - [PAA Core 宿主分离](details/paa-architecture.md) -- 大脑层在 paa/ 包，CLI 宿主通过 fs.read 从外部读 index.html 分析
 - [Autonomy 分级](details/autonomy-design.md) -- 全局 Level 0-4 + 每工具 override，有效级=min(全局,工具cap)
 
