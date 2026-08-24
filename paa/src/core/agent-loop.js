@@ -13,7 +13,7 @@ export function createAgentLoop(deps) {
       opts = opts || {};
       const cfg = { ...this.config, ...(opts.config || {}) };
       const ac = new AbortController();
-      const st = { actions: [], reply: '', aborted: false, round: 0, lastCall: null, repeat: 0, texts: [] };
+      const st = { actions: [], reply: '', aborted: false, round: 0, lastCall: null, repeat: 0, texts: [], trace: [] };
       /* requiredTool 机械强制：提示词里的「硬纪律」模型可能跳过（G3 实测 DeepSeek 概率性无视第 7 步），
          循环层补位才算真「硬」。done=已调用过，nagged=已提醒过（只提醒一次，避免死循环）。 */
       const required = { done: false, nagged: false };
@@ -42,6 +42,9 @@ export function createAgentLoop(deps) {
               let args = {};
               try { args = JSON.parse(tc.argsJson || '{}'); } catch (e) {}
               const res = pipeline.run(tc.name, args);
+              /* 进度钩子 + 轨迹采集：宿主可实时展示工具调用（onStep），转录文件依赖 trace */
+              st.trace.push({ round: st.round, tool: tc.name, args, pending: !!res.pending, ok: res.pending ? null : !!res.ok, result: res.pending ? '' : String(res.ok ? res.result : res.error) });
+              if (opts.onStep) { try { opts.onStep({ round: st.round, tool: tc.name, args, pending: !!res.pending }); } catch (e) {} }
               if (res.pending) {
                 st.actions.push({ tool: tc.name, args });
                 msgs.push(llm.toolMsg(tc.id, res.result));
@@ -70,12 +73,12 @@ export function createAgentLoop(deps) {
           const labels = st.actions.map(a => (labelFn ? labelFn(a.tool) : a.tool));
           reply = '已为你规划 ' + st.actions.length + ' 项操作：' + labels.join('、') + '。请确认后执行。';
         }
-        return { reply, actions: st.actions, aborted: st.aborted, rounds: st.round };
+        return { reply, actions: st.actions, aborted: st.aborted, rounds: st.round, texts: st.texts, trace: st.trace };
       } catch (e) {
         if (e && (e.name === 'AbortError' || ac.signal.aborted)) {
           st.aborted = true;
           const reply = st.texts.join('\n\n');
-          return { reply: reply || '⏱ 请求超时或被中断，请重试。', actions: st.actions, aborted: true, rounds: st.round };
+          return { reply: reply || '⏱ 请求超时或被中断，请重试。', actions: st.actions, aborted: true, rounds: st.round, texts: st.texts, trace: st.trace };
         }
         throw e;
       } finally {

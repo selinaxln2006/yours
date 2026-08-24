@@ -165,3 +165,90 @@ P0 骨架三件套就位，行为对齐现状。真正的考验在 X.3 联测：
 下一步：X.3 联测（俪宁配 API 实测）→ X.4 收尾（DEVLOG 反思 + git commit + push）。
 
 ---
+
+## P0 v2 — 骨架四件套 TypeScript 重写（2026-08-24）
+
+> 背景：俪宁 08-24 裁决——PAA 按 v2 设计文档自研实现（循环/状态/格式自研），DSH/Operit/TencentDB 只在"设计思想"位被参考，不得 import 其 core。旧 `paa/src/*.js`（学生级轮子）冻结留档。流程宪法 `docs/architecture/paa-dev-process.md` 同日生效（X.1→X.4 四审核点）。
+
+### 做了什么
+
+- `paa/core/` 四件套（TS，零运行时依赖，Node 24 原生 type-stripping 直接跑）：
+  - `types.ts`：核心类型（ChatMessage/ToolCall/ToolDefinition/ExecContext/MemoryRecord/SessionEvent/LoopResult）
+  - `permission.ts`：risk 1-4 分级 × Autonomy L0-L4；risk 4（危险）永远 ask 不可降级
+  - `llm-adapter.ts`：LLMAdapter 接口 + OpenAICompatibleAdapter（DeepSeek 实测连通）+ tools schema 转换 + 工厂
+  - `tool-pipeline.ts`：注册表 + before(权限门+审计) → execute → after(审计) 管道
+  - `session-mgr.ts`：JSONL 事件溯源（append/load/list）
+  - `agent-loop.ts`：单层循环 + abort() + inject()（预留）+ maxRounds + 每轮记忆检索钩子（P1 接入）
+- `paa/tools/core-tools.ts`：6 工具（fs_read/fs_write/fs_append/fs_patch/fs_list/shell_run），root 沙箱 + shell 黑名单
+- `paa/cli/`：render.ts（ANSI 卡片渲染）+ main.ts（交互循环 + `--once` 非交互单次执行）
+- `paa/test/`：smoke.ts（8 项：权限门/唯一匹配/黑名单/越界/会话/拒绝）+ agent-loop.ts（mock LLM 编排 2 轮收敛）
+
+### 设计决策
+
+- **工具名去点号**（fs.read → fs_read）：DeepSeek/OpenAI 兼容 tools API 的 function.name 只允许 `^[a-zA-Z0-9_-]+$`，实测 400。这是对标时该想到的：Operit/DSH 工具名均无点。
+- **handler 契约 = 纯数据 + throw**：pipeline 统一 catch 转 `{ok:false}`。曾出现双层包装 bug（handler 返回 `{ok:false}` 被外层又包成 `{ok:true}`），冒烟测试当场抓住——单测的价值实证。
+- **Node 24 strip-only 限制**：不支持 TS parameter property（`constructor(private x)`），全部改显式字段声明。这是运行时约束，typecheck 层面看不出来，只有跑起来才知道。
+- **CLI 输入用 for-await 迭代器**：question() 在异步初始化（读 config）后调用时 stdin 已 EOF 会丢输入；迭代器在 readline 创建时即缓冲。附赠 `--once` 模式（Codex CLI 同款非交互执行，未来脚本/集成可用）。
+- **循环选单层 + abort**（v2 决策）：不引入 DSH 式多层 Turn/Step 状态机，保持"一轮 = LLM 往返 + 若干工具 step"，abort 在下一检查点生效。
+
+### 代码地图
+
+```
+paa/
+  core/{types,permission,llm-adapter,tool-pipeline,session-mgr,agent-loop}.ts
+  tools/core-tools.ts          # 6 内置工具
+  cli/{main,render}.ts         # 入口 + 渲染
+  test/{smoke,agent-loop}.ts   # 8+1 项测试
+  config.json                  # 复用旧 DeepSeek key（apiUrl/apiKey/model）
+  runs/<sessionId>/events.jsonl
+```
+
+### 踩坑（真实记录）
+
+1. strip-only 不支持 parameter property → 显式字段
+2. tools function.name 带点 → 400 → 去点号
+3. handler 双层 ok 包装 → 契约统一为 throw
+4. PowerShell 管道 stdin 在异步初始化期间 EOF → for-await + --once
+5. render.ts 卡片曾取不到工具参数（事件 payload 缺 arguments）→ agent-loop 补存
+
+### 验证结果（X.3 自测段）
+
+- `tsc --noEmit`：0 错误
+- `test/smoke.ts`：8/8 ✅（权限门 L2/risk3 触发 ask、非唯一 patch 拒绝、黑名单拒绝、越界拒绝、会话溯源、用户拒绝）
+- `test/agent-loop.ts`：2 轮收敛 / 1 次工具 / 事件溯源 4 条 ✅
+- 真实 LLM：`--once "Say hi"` → DeepSeek 回复 ✅
+- 真实工具闭环：`--once "读 package.json"` → LLM 自主调 fs_list → 回喂 → 收敛回答（并纠正"根目录无 package.json"的前提）✅
+
+### 反思 / 下一步
+
+- 这是第一次"设计文档 → 流程宪法 → 逐部件实现"的完整闭环。与旧 CLI 的本质区别：每个部件都有对标依据（写在文件头注释），不再是从零拍脑袋。
+- 记忆系统（P1）是下一步：Memory 数据模型 + 4 工具 + 自动注入 + 导入导出（记忆主权红线）。AgentLoop 的记忆检索钩子已留好（memoryProvider 接口）。
+- 待俪宁实测验收（X.3 正式段）：交互模式跑真实任务，验收 G1/G2/G3 + 权限确认体验。
+
+---
+
+## P0 v2.1 — X.3 正式段实测后修订（2026-08-24）
+
+> 背景：俪宁实测"测试你的能力上限和下限"——真实验证到 G1 fs 闭环 ✅ + 测试 8/8 ✅ + 自诊断闭环（agent 从 findstr 失败自学习、node -e 绕行）✅；同时暴露 shell 在 Windows 基本废（pwd/head/grep/which 全挂、GBK 乱码）、12 轮耗尽裸停、任务漂移、确认疲劳。
+
+### 修订（5 项）
+
+- **P0-A fs_grep 加回**：正则搜索（JS 语法），文件/目录通用，自动忽略 node_modules/.git/dist/build/runs，risk 1 自动放行。旧 CLI 有此工具（G3 验证过），v2 重写时遗漏——流程失误，认。
+- **P0-B 系统提示注入平台纪律**："Windows/cmd：pwd/ls/cat/grep/head 不存在；文件操作走 fs 工具；shell 只跑 node/npm/git/tsc；避免中文输出（GBK 乱码）"+ 任务聚焦纪律（一次一目标、先定义完成标准、探索定步数预算）。
+- **P0-C 耗尽给阶段总结**：AgentLoop 每轮收集中间说明 + 工具成败统计，maxRounds 耗尽/中断时输出摘要（过程/失败项/未完成项），替代裸停。
+- **P1-D ask 支持 a=always allow**：`ExecContext.ask(prompt, toolName?)` 加可选参数（测试 mock 天然兼容），CLI 维护 trustedTools 会话级集合，新增 `/trust`、`/trust clear` 命令。
+- **P1-E shell_run 合并 stderr**：成功时 stderr 也返回（`[stderr]` 段）；编码已知限制标注。
+
+### 验证（X.3 修订自测段）
+
+- `tsc --noEmit`：0 错误
+- `test/smoke.ts`：8/8 ✅（ask 签名兼容性无破坏）
+- `test/agent-loop.ts`：2 轮收敛 ✅
+- 真实 LLM：`--once "用 fs_grep 在 docs/DEVLOG.md 搜索 P0 v2"` → agent 自主调 fs_grep → 准确报告第 169 行，1 轮收敛 ✅
+
+### 反思
+
+- 这次修订的价值：**G3 闭环用在了自己身上**——实测暴露的问题全部来自"agent 在 Windows 上按 Unix 习惯操作"，而修复方案（fs_grep + 平台纪律）正是旧版验证过的能力，属于"该复用未复用"。教训：工具集迁移时逐项对照旧清单，不凭记忆。
+- 待俪宁重测同指令：验收标准 = fs_grep 检索 / shell 只碰 node-npm-git / 耗尽有总结 / 确认 ≤3 次。
+
+---

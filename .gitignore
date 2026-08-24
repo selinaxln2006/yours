@@ -32,3 +32,6 @@ serve.err.log
 
 # PAA 本地密钥配置
 paa/config.json
+
+# PAA 会话转录（每次运行的完整记录，量大不进仓库）
+paa/runs/
