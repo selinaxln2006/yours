@@ -16,9 +16,12 @@ import { SessionMgr } from '../core/session-mgr.ts';
 import { Permission, type AutonomyLevel } from '../core/permission.ts';
 import { JsonMemoryProvider, createDefaultPersonaSeed } from '../core/memory-provider.ts';
 import { FileArtifactProvider } from '../core/artifact-provider.ts';
+import { PkgLoader } from '../core/pkg-loader.ts';
+import { McpClient, createMcpToolDefinitions, type McpServerConfig } from '../core/mcp-client.ts';
 import { createCoreTools } from '../tools/core-tools.ts';
 import { createMemoryTools } from '../tools/memory-tools.ts';
 import { createArtifactTools } from '../tools/artifact-tools.ts';
+import { createPkgTools } from '../tools/pkg-tools.ts';
 import { render } from './render.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -36,13 +39,15 @@ const SYSTEM_PROMPT = `你是枢（Shū），俪宁的跨界 AI 搭档。锐利�
 6. 不确定先问：模糊场景先向用户说明再动手
 
 平台纪律（当前是 Windows/cmd 环境，必须遵守）：
-- pwd / ls / cat / grep / head / which / touch / rm / mv 等 Unix 命令不存在，不要用
+- pwd / ls / cat / grep / head / which / touch / rm / mv / wc 等 Unix 命令不存在，不要用
 - 文件检索用 fs_grep（正则），列目录用 fs_list，读文件用 fs_read（行切片）
-- shell_run 只用于真实需要的命令（node / npm / git / tsc），命令避免输出中文（cmd 编码 GBK 会乱码）
+- shell_run 只用于真实需要的命令（node / npm / git / tsc）；命令输出已自动做 GBK/UTF-8 编码转换，但解析输出仍以英文/结构化内容为准
 - 路径分隔符正反斜杠均可，fs 工具自动处理
+- 下方"仓库结构快照"标出了文件真实位置，直接按它定位路径，不要对未知目录反复 fs_list 试错
 
 任务聚焦纪律：
 - 一次只做一件事；动手前先明确完成标准（做什么、做到什么程度算完成）
+- 指令模糊/方向性（缺明确目标或完成标准，如"优化一下""你看着办"）时：第 1 轮用一句话反问澄清目标+完成标准，不要先烧探索预算；用户明确授权"先看再定"才进入探索
 - 探索类任务先定步数预算（如"最多 5 步"），到预算即给阶段性结论，不无限扩散
 - 每轮工具调用必须朝完成标准推进；与目标无关的发现先记录不执行
 
@@ -54,7 +59,42 @@ const SYSTEM_PROMPT = `你是枢（Shū），俪宁的跨界 AI 搭档。锐利�
 
 所有写操作（fs_write/fs_append/fs_patch）和 shell_run 会请求用户确认（y/n/a：a=本会话不再询问该工具）；被拒绝就换方案。`;
 
-async function loadConfig(): Promise<LLMConfig | null> {
+/** 仓库结构快照：会话初始注入，省去 agent 反复 fs_list 探索目录树 */
+const TREE_IGNORE = new Set(['node_modules', '.git', 'dist', 'build', 'runs', 'artifacts', 'generated-images', '.codebuddy']);
+
+async function buildRepoTree(root: string, maxDepth = 3, maxLines = 100): Promise<string> {
+  const { readdir } = await import('node:fs/promises');
+  const lines: string[] = ['.'];
+  const walk = async (dir: string, depth: number): Promise<void> => {
+    if (lines.length >= maxLines || depth > maxDepth) return;
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    const dirs = entries.filter((e) => e.isDirectory() && !TREE_IGNORE.has(e.name));
+    const files = entries.filter((e) => e.isFile());
+    for (const e of [...dirs, ...files]) {
+      if (lines.length >= maxLines) return;
+      const rel = path.relative(root, path.join(dir, e.name)) || e.name;
+      lines.push(`${rel}${e.isDirectory() ? '/' : ''}`);
+      if (e.isDirectory()) await walk(path.join(dir, e.name), depth + 1);
+    }
+  };
+  await walk(root, 1);
+  return lines.join('\n');
+}
+
+/** CLI 配置聚合：LLM + MCP servers + 全局 FORBID 名单 */
+interface CliConfig {
+  llm: LLMConfig | null;
+  mcpServers: McpServerConfig[];
+  forbiddenTools: string[];
+}
+
+async function loadConfig(): Promise<CliConfig> {
+  const empty: CliConfig = { llm: null, mcpServers: [], forbiddenTools: [] };
   try {
     const raw = JSON.parse(
       await readFile(path.join(PAA_ROOT, 'config.json'), 'utf8'),
@@ -63,15 +103,38 @@ async function loadConfig(): Promise<LLMConfig | null> {
     const baseUrl = apiUrl.endsWith('/chat/completions')
       ? apiUrl.replace(/\/chat\/completions$/, '')
       : apiUrl;
-    if (!baseUrl || !raw.apiKey) return null;
-    return {
-      provider: 'openai-compatible',
-      baseUrl,
-      apiKey: String(raw.apiKey),
-      model: String(raw.model ?? 'deepseek-chat'),
-    };
+    let llm: LLMConfig | null = null;
+    if (baseUrl && raw.apiKey) {
+      llm = {
+        provider: 'openai-compatible',
+        baseUrl,
+        apiKey: String(raw.apiKey),
+        model: String(raw.model ?? 'deepseek-chat'),
+      };
+    }
+    // G5：MCP servers（数组；单项不合法跳过并提示，不整体失败）
+    const mcpServers: McpServerConfig[] = [];
+    if (Array.isArray(raw.mcpServers)) {
+      for (const s of raw.mcpServers as Array<Record<string, unknown>>) {
+        if (typeof s !== 'object' || s === null) continue;
+        if (typeof s.name !== 'string' || !s.name.trim()) continue;
+        if (typeof s.command !== 'string' || !s.command.trim()) continue;
+        mcpServers.push({
+          name: s.name,
+          command: s.command,
+          args: Array.isArray(s.args) ? (s.args as string[]) : undefined,
+          env: typeof s.env === 'object' && s.env !== null ? (s.env as Record<string, string>) : undefined,
+          risk: s.risk === 1 || s.risk === 2 || s.risk === 3 ? s.risk : undefined,
+        });
+      }
+    }
+    // G5：全局 FORBID 名单（config.forbiddenTools，硬拒绝任何工具）
+    const forbiddenTools: string[] = Array.isArray(raw.forbiddenTools)
+      ? (raw.forbiddenTools as unknown[]).filter((x): x is string => typeof x === 'string')
+      : [];
+    return { llm, mcpServers, forbiddenTools };
   } catch {
-    return null;
+    return empty;
   }
 }
 
@@ -153,7 +216,7 @@ async function main(): Promise<void> {
 
   console.log(render.banner());
   const config = await loadConfig();
-  if (!config) {
+  if (!config.llm) {
     console.log(render.error('未找到有效 config.json（需要 apiUrl + apiKey），请先配置。'));
     process.exit(1);
   }
@@ -161,23 +224,61 @@ async function main(): Promise<void> {
   const session = new SessionMgr(path.join(PAA_ROOT, 'runs'));
   const sessionId = await session.newSession();
 
+  const audit = (line: string): void => console.log(render.audit(line));
   const permission = new Permission(level);
+  // G5：全局 FORBID 名单（config.forbiddenTools，硬拒绝，任何 Autonomy 不可放行）
+  for (const f of config.forbiddenTools) permission.forbid(f);
   const pipeline = new ToolPipeline(permission);
   for (const t of createCoreTools(root)) pipeline.register(t);
   for (const t of createMemoryTools(memory)) pipeline.register(t);
   for (const t of createArtifactTools(artifacts)) pipeline.register(t);
 
-  const adapter = createAdapter(config);
+  // G5：ToolPkg 动态加载（paa/pkgs/ 目录，manifest.json + impl.mjs）
+  const pkgLoader = new PkgLoader({
+    pkgsRoot: path.join(PAA_ROOT, 'pkgs'),
+    pipeline,
+    permission,
+    env: { root, pkgDir: path.join(PAA_ROOT, 'pkgs'), audit },
+  });
+  for (const t of createPkgTools(pkgLoader)) pipeline.register(t);
+  const loadedPkgs = await pkgLoader.loadAll();
+  const pkgErrors = pkgLoader.getErrors();
+  if (Object.keys(pkgErrors).length > 0) {
+    for (const [name, why] of Object.entries(pkgErrors)) {
+      console.log(render.error(`工具包 ${name} 加载失败（已跳过）: ${why}`));
+    }
+  }
+
+  // G5：MCP servers（config.mcpServers；单个连接失败不阻塞启动）
+  const mcpClients: McpClient[] = [];
+  for (const srv of config.mcpServers) {
+    const client = new McpClient(srv);
+    try {
+      await client.connect();
+      for (const t of createMcpToolDefinitions(client, { risk: srv.risk })) pipeline.register(t);
+      mcpClients.push(client);
+    } catch (e) {
+      console.log(render.error(`MCP server ${srv.name} 连接失败（已跳过）: ${e instanceof Error ? e.message : String(e)}`));
+    }
+  }
+  const closeMcp = (): void => {
+    for (const c of mcpClients) c.close();
+  };
+
+  const adapter = createAdapter(config.llm);
+  const repoTree = await buildRepoTree(root);
   const loop = new AgentLoop({
     adapter,
     pipeline,
     session,
-    systemPrompt: SYSTEM_PROMPT,
+    systemPrompt:
+      SYSTEM_PROMPT +
+      '\n\n# 仓库结构快照（会话初始注入，直接据此定位路径，不要对未知目录反复 fs_list 试错）\n' +
+      repoTree,
     memoryProvider: memory,
     maxRounds: 12,
   });
 
-  const audit = (line: string): void => console.log(render.audit(line));
   const ctx = { sessionId, cwd: root, ask, audit };
 
   console.log(render.status(`沙箱根: ${root} | Autonomy: L${level} | 会话: ${sessionId}`));
@@ -185,7 +286,10 @@ async function main(): Promise<void> {
   console.log(render.status(`记忆: ${memCount} 条（paa/memory/store.json，L3 画像种子已注入）`));
   const artCount = (await artifacts.list()).length;
   console.log(render.status(`产物: ${artCount} 个（paa/artifacts/，真文件落盘+版本快照）`));
-  console.log(render.status(`工具: ${pipeline.list().map((t) => t.name).join(', ')}`));
+  console.log(render.status(`工具包: ${loadedPkgs.length} 个已加载（${loadedPkgs.map((p) => p.manifest.name).join(', ') || '无'}）`));
+  console.log(render.status(`MCP: ${mcpClients.length} 个已连接（${mcpClients.map((c) => c.name).join(', ') || '无'}）`));
+  const toolNames = pipeline.list().map((t) => t.name);
+  console.log(render.status(`工具: ${toolNames.length} 个（${toolNames.join(', ')}）`));
   console.log('');
 
   // 非交互单次执行（--once "指令"）：脚本/自动化/测试场景
@@ -208,6 +312,7 @@ async function main(): Promise<void> {
     };
     await run(once);
     rl.close();
+    closeMcp();
     return;
   }
 
@@ -272,6 +377,7 @@ async function main(): Promise<void> {
     }
   }
   rl.close();
+  closeMcp();
 }
 
 main().catch((e) => {

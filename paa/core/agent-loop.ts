@@ -34,6 +34,16 @@ export interface AgentLoopCtx {
   audit: (line: string) => void;
 }
 
+/** 工具结果注入上下文前的长度上限（防止长输出撑爆窗口） */
+const MAX_TOOL_RESULT_CHARS = 8000;
+
+function truncateToolResult(result: unknown): string {
+  const s = JSON.stringify(result);
+  return s.length > MAX_TOOL_RESULT_CHARS
+    ? s.slice(0, MAX_TOOL_RESULT_CHARS) + `…[已截断: 原长 ${s.length} 字符，请用参数缩小范围后重查]`
+    : s;
+}
+
 export class AgentLoop {
   private abortFlag = false;
   private injectQueue: SessionEvent[] = [];
@@ -150,7 +160,7 @@ export class AgentLoop {
           role: 'tool',
           toolCallId: call.id,
           name: call.name,
-          content: JSON.stringify(result),
+          content: truncateToolResult(result),
         });
         const toolEv: SessionEvent = {
           ts: Date.now(),

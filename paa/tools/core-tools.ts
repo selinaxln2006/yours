@@ -6,7 +6,25 @@
 
 import { readFile, writeFile, appendFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
+import { TextDecoder } from 'node:util';
 import type { ExecContext, ToolDefinition } from '../core/types.ts';
+
+/** ENOENT 时给出同目录候选，避免 agent 反复 fs_list 猜路径 */
+async function missingHint(absRoot: string, rel: string, file: string): Promise<string> {
+  const parent = path.dirname(file);
+  const base = path.basename(rel).split('.')[0].toLowerCase();
+  try {
+    const entries = await readdir(parent, { withFileTypes: true });
+    const names = entries.map((e) => (e.isDirectory() ? e.name + '/' : e.name));
+    const similar = names.filter((n) => n.toLowerCase().includes(base)).slice(0, 5);
+    const shown = names.length > 20 ? names.slice(0, 20).join(', ') + ' …' : names.join(', ');
+    const hint = `。目录 ${path.relative(absRoot, parent) || '.'} 下现有 ${names.length} 项: ${shown}`;
+    return similar.length ? hint + `。疑似目标: ${similar.join(', ')}` : hint;
+  } catch {
+    const relParent = path.relative(absRoot, path.dirname(parent)) || '.';
+    return `。目录 ${path.relative(absRoot, parent) || '.'} 也不存在（请检查层级，最近存在的层: ${relParent}）`;
+  }
+}
 
 const SHELL_BLACKLIST = [
   'rm -rf', 'rmdir /s', 'del /s', 'format ', 'shutdown', 'diskpart',
@@ -35,8 +53,19 @@ export function createCoreTools(root: string): ToolDefinition[] {
       },
       risk: 1,
       handler: async (args: Record<string, unknown>) => {
-        const file = resolve(String(args.path));
-        const raw = await readFile(file, 'utf8');
+        const rel = String(args.path);
+        const file = resolve(rel);
+        let raw: string;
+        try {
+          raw = await readFile(file, 'utf8');
+        } catch (err) {
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code === 'ENOENT' || code === 'EISDIR') {
+            const hint = await missingHint(absRoot, rel, file);
+            throw new Error(code === 'EISDIR' ? `目标是目录，请用 fs_list 查看: ${rel}${hint}` : `文件不存在: ${rel}${hint}`);
+          }
+          throw err;
+        }
         const lines = raw.split('\n');
         const offset = Number(args.offset ?? 1);
         const limit = args.limit === undefined ? undefined : Number(args.limit);
@@ -175,12 +204,30 @@ export function createCoreTools(root: string): ToolDefinition[] {
           throw new Error(`命令命中黑名单: ${hit}`);
         }
         const { exec } = await import('node:child_process');
-        // 注：cmd 输出在中文 Windows 上是 GBK，utf8 解码可能乱码 → 系统提示已要求避免中文输出（P0 已知限制）
+        // Windows cmd 默认 GBK 输出：切 UTF-8 代码页 + buffer 解码（UTF-8 失败回退 GBK），消除中文乱码
+        const isWin = process.platform === 'win32';
+        const fullCmd = isWin && !/^chcp\b/i.test(cmd) ? `chcp 65001 >nul & ${cmd}` : cmd;
+        const utf8 = new TextDecoder('utf-8', { fatal: true });
+        const gbk = new TextDecoder('gbk');
+        const decode = (buf: Buffer | null): string => {
+          if (!buf || buf.length === 0) return '';
+          try {
+            return utf8.decode(buf);
+          } catch {
+            return gbk.decode(buf);
+          }
+        };
         const out = await new Promise<string>((res) => {
-          exec(cmd, { cwd: absRoot, timeout: 30_000, windowsHide: true }, (err, stdout, stderr) => {
-            if (err) res(`(exit ${err.code ?? '?'}) ${stderr.trim() || stdout.trim()}`);
-            else res(stdout.trim() + (stderr.trim() ? `\n[stderr] ${stderr.trim().slice(0, 1000)}` : ''));
-          });
+          exec(
+            fullCmd,
+            { cwd: absRoot, timeout: 30_000, windowsHide: true, encoding: 'buffer', maxBuffer: 8 * 1024 * 1024 },
+            (err, stdout, stderr) => {
+              const so = decode(stdout as Buffer);
+              const se = decode(stderr as Buffer);
+              if (err) res(`(exit ${err.code ?? '?'}) ${se.trim() || so.trim()}`);
+              else res(so.trim() + (se.trim() ? `\n[stderr] ${se.trim().slice(0, 1000)}` : ''));
+            },
+          );
         });
         return { stdout: out.slice(0, 4000) };
       },

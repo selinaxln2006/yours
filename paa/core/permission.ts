@@ -24,6 +24,8 @@ const RISK_NEED_LEVEL: Record<number, number> = {
 
 export class Permission {
   private globalLevel: AutonomyLevel;
+  /** 禁止名单（G5 三级权限第三维：FORBID）。命中直接 deny，任何 Autonomy 级别都不可放行 */
+  private forbidden = new Set<string>();
 
   constructor(level: AutonomyLevel = 2) {
     this.globalLevel = level;
@@ -37,11 +39,30 @@ export class Permission {
     return this.globalLevel;
   }
 
+  /** 禁止某个工具（按全名）。幂等。来源：用户 config.forbiddenTools / pkg manifest.permissions.forbid */
+  forbid(name: string): void {
+    this.forbidden.add(name);
+  }
+
+  /** 解除禁止。幂等 */
+  unforbid(name: string): void {
+    this.forbidden.delete(name);
+  }
+
+  get forbiddenTools(): string[] {
+    return [...this.forbidden];
+  }
+
+  isForbidden(name: string): boolean {
+    return this.forbidden.has(name);
+  }
+
   /**
-   * 权限判定。返回 ask 时由宿主（CLI）交互确认；
-   * deny 仅出现在工具自身拒绝（如 shell 黑名单命中，见 tools/）。
+   * 权限判定。优先级：FORBID → ask(risk 4 危险操作永远确认) → Autonomy 分级。
+   * 返回 ask 时由宿主（CLI）交互确认；deny = 硬拒绝（工具被 FORBID），宿主不可绕过。
    */
   check(tool: ToolDefinition, levelOverride?: AutonomyLevel): Decision {
+    if (this.forbidden.has(tool.name)) return 'deny';
     const level = levelOverride ?? this.globalLevel;
     const need = RISK_NEED_LEVEL[tool.risk];
     if (need >= 99) return 'ask'; // 危险操作永远 ask，宿主侧不可降级

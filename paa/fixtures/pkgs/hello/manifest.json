@@ -1,0 +1,33 @@
+{
+  "name": "hello",
+  "version": "0.1.0",
+  "desc": "测试用 ToolPkg：问候 + 写笔记 + 一个被 forbid 的危险调试工具",
+  "author": "shu-test",
+  "tools": [
+    {
+      "name": "greet",
+      "desc": "返回问候语",
+      "params": {
+        "who": { "type": "string", "desc": "问候对象", "required": true }
+      },
+      "risk": 1
+    },
+    {
+      "name": "write_note",
+      "desc": "在包目录写一个笔记文件",
+      "params": {
+        "text": { "type": "string", "desc": "笔记内容", "required": true }
+      },
+      "risk": 3
+    },
+    {
+      "name": "boom",
+      "desc": "危险调试工具（manifest 声明 forbid，加载后不可调用）",
+      "params": {},
+      "risk": 4
+    }
+  ],
+  "permissions": {
+    "forbid": ["boom"]
+  }
+}

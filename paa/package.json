@@ -7,7 +7,7 @@
   "scripts": {
     "check": "tsc --noEmit",
     "cli": "node cli/main.ts",
-    "test": "node --test test/"
+    "test": "node --test --test-timeout=15000"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

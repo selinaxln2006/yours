@@ -31,6 +31,11 @@ export class ToolPipeline {
     return this.registry.get(name);
   }
 
+  /** 卸载工具（G5 pkg 动态卸载用）。返回是否真的删除了 */
+  unregister(name: string): boolean {
+    return this.registry.delete(name);
+  }
+
   list(): ToolDefinition[] {
     return [...this.registry.values()];
   }
@@ -44,6 +49,11 @@ export class ToolPipeline {
 
     // before：权限门
     const decision = this.permission.check(tool);
+    if (decision === 'deny') {
+      // G5 三级权限 FORBID：硬拒绝，不询问、不可绕过（宿主侧没有 "override" 通道）
+      ctx.audit(`[AUTO] ${tool.name} 被 FORBID 拒绝（权限名单）`);
+      return { ok: false, error: `工具 ${tool.name} 已被禁止（FORBID），无法执行` };
+    }
     if (decision === 'ask') {
       const ok = await ctx.ask(
         `允许执行 [${tool.name}]？\n  参数: ${JSON.stringify(call.arguments)}`,
