@@ -1,0 +1,11 @@
+{
+  "name": "",
+  "height": 165,
+  "age": 20,
+  "targetWeight": 55,
+  "targetBodyFat": 24,
+  "activityLevel": 1.4,
+  "dailyCalorieTarget": 1600,
+  "dailyBudget": 45,
+  "targetWater": 2000
+}

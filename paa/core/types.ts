@@ -130,6 +130,8 @@ export interface LoopResult {
   toolCalls: number;
   events: SessionEvent[];
   aborted: boolean;
+  /** 本轮完整消息轨迹（不含 system；含 tool 消息）——宿主可作为下一轮的 prior 续跑对话 */
+  messages?: ChatMessage[];
 }
 
 /** 工具注册表（P0 先用 Map 内置于 Pipeline；P3 扩展为 Skill Registry） */

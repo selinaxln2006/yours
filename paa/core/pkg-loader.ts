@@ -28,6 +28,11 @@ export interface PkgManifest {
   }>;
   /** 权限声明：forbid = 本包内默认禁用的工具短名（加载时灌入 Permission，任何级别不可放行） */
   permissions?: { forbid?: string[] };
+  /**
+   * 服务依赖声明（console-v1）：本包需要宿主注入的服务名列表。
+   * 加载时逐一校验 PkgEnv.services 中存在，缺任何一个即整体加载失败。
+   */
+  services?: string[];
 }
 
 /** 已加载包的状态 */
@@ -43,6 +48,11 @@ export interface PkgEnv {
   root: string; // 沙箱根（fs 工具的 root）
   pkgDir: string; // 包目录（可读包内资源）
   audit: (line: string) => void;
+  /**
+   * 宿主服务注册表（console-v1）：宿主注入的共享单例（如 LifeStore）。
+   * manifest.services 声明依赖名，加载时校验存在性——声明式 DI，不是隐式全局。
+   */
+  services?: Record<string, unknown>;
 }
 
 /** impl.mjs 必须默认导出工厂；返回短名 → handler 的映射 */
@@ -151,6 +161,16 @@ export class PkgLoader {
       if (![1, 2, 3, 4].includes(risk)) fail(`工具 ${String(tt.name)} risk 非法（需 1-4）: ${String(tt.risk)}`);
       if (typeof tt.params !== 'object' || tt.params === null) fail(`工具 ${String(tt.name)} params 缺失`);
     }
+    if (mm.services !== undefined) {
+      if (!Array.isArray(mm.services) || mm.services.some((s) => typeof s !== 'string' || !s.trim())) {
+        fail('services 必须是非空字符串数组');
+      }
+      const seenSvc = new Set<string>();
+      for (const s of mm.services as string[]) {
+        if (seenSvc.has(s)) fail(`services 重复: ${s}`);
+        seenSvc.add(s);
+      }
+    }
     if (mm.permissions !== undefined) {
       const perms = mm.permissions as Record<string, unknown>;
       if (typeof perms !== 'object' || perms === null) fail('permissions 不是对象');
@@ -182,10 +202,23 @@ export class PkgLoader {
       throw new Error(`impl.mjs 必须默认导出 createPkgTools(env) 工厂函数`);
     }
 
+    // 服务依赖校验（console-v1）：manifest.services 声明的每一个服务，宿主 env.services 必须已注入
+    const requiredServices = manifest.services ?? [];
+    for (const svc of requiredServices) {
+      if (!this.env.services || !(svc in this.env.services)) {
+        throw new Error(`包 ${name} 声明的服务 "${svc}" 未由宿主注入（PkgEnv.services 缺失），拒绝加载`);
+      }
+    }
+
     // 调用工厂拿到 handler map，逐工具注册（冲突/缺实现则整体失败回滚）
     let handlers: Record<string, PkgHandler>;
     try {
-      handlers = impl.createPkgTools({ root: this.env.root, pkgDir: dir, audit: this.env.audit });
+      handlers = impl.createPkgTools({
+        root: this.env.root,
+        pkgDir: dir,
+        audit: this.env.audit,
+        services: this.env.services,
+      });
     } catch (e) {
       throw new Error(`createPkgTools 执行失败: ${e instanceof Error ? e.message : String(e)}`);
     }

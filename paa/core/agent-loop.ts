@@ -14,6 +14,7 @@ import type {
 } from './types.ts';
 import type { ToolPipeline } from './tool-pipeline.ts';
 import type { LLMAdapter } from './llm-adapter.ts';
+import { supportsStreaming } from './llm-adapter.ts';
 import type { SessionMgr } from './session-mgr.ts';
 
 export interface AgentLoopDeps {
@@ -32,6 +33,29 @@ export interface AgentLoopCtx {
   cwd: string;
   ask: (prompt: string) => Promise<boolean>;
   audit: (line: string) => void;
+}
+
+/** run() 的可选扩展（console-v1：对话历史续跑 + 事件实时回调）；完全向后兼容 */
+export interface RunOptions {
+  /** 跨 run 对话历史（不含 system），插入 system 之后、本轮 user 之前 */
+  prior?: ChatMessage[];
+  /** 事件实时回调（WS 推送用）；事件同时仍进 session 与 result.events */
+  onEvent?: (ev: SessionEvent) => void;
+  /** 流式回调：assistant 文本增量（工具增量经 onEvent 的 tool 事件实时推，无需在此逐字符） */
+  onDelta?: (text: string) => void;
+}
+
+/** 输出模式（v1.1：agent 每轮回复首行声明，loop 解析后随事件下发给前端） */
+export type OutputMode = 'plan-execute' | 'single' | 'sequential' | 'text';
+
+const MODE_RE = /^\s*\[MODE:(plan-execute|single|sequential|text)\]\s*/;
+
+/** 解析并剥离首行 [MODE:xxx]，返回 { mode, content } */
+export function parseMode(content: string | null | undefined): { mode: OutputMode | null; content: string } {
+  const raw = content ?? '';
+  const m = MODE_RE.exec(raw);
+  if (!m) return { mode: null, content: raw };
+  return { mode: m[1] as OutputMode, content: raw.slice(m[0].length) };
 }
 
 /** 工具结果注入上下文前的长度上限（防止长输出撑爆窗口） */
@@ -87,15 +111,24 @@ export class AgentLoop {
     return this.deps.systemPrompt + memBlock + toolBlock;
   }
 
-  async run(userText: string, ctx: AgentLoopCtx): Promise<LoopResult> {
+  async run(userText: string, ctx: AgentLoopCtx, opts?: RunOptions): Promise<LoopResult> {
     this.abortFlag = false;
     const events: SessionEvent[] = [];
+    const emit = (ev: SessionEvent): void => {
+      events.push(ev);
+      opts?.onEvent?.(ev);
+    };
 
-    events.push({ ts: Date.now(), type: 'user', payload: { text: userText } });
+    emit({ ts: Date.now(), type: 'user', payload: { text: userText } });
     await this.deps.session.append(ctx.sessionId, events[events.length - 1]);
 
     const sys = await this.buildSystemPrompt(userText);
     const messages: ChatMessage[] = [{ role: 'system', content: sys }];
+
+    // console-v1：注入跨 run 对话历史（不含 system）
+    if (opts?.prior?.length) {
+      messages.push(...opts.prior);
+    }
 
     // 处理注入队列（预留）
     for (const ev of this.injectQueue.splice(0)) {
@@ -116,33 +149,44 @@ export class AgentLoop {
 
     while (rounds < this.maxRounds && !this.abortFlag) {
       rounds++;
-      const assistant = await this.deps.adapter.chat(messages, {
-        tools: this.deps.pipeline.list(),
-      });
+      const toolDefs = this.deps.pipeline.list();
+      let assistant: ChatMessage;
+      // 流式优先（v1.1）：适配器支持则逐块回调 onDelta，前端打字机
+      if (supportsStreaming(this.deps.adapter)) {
+        assistant = await this.deps.adapter.chatStream(messages, { tools: toolDefs }, {
+          onText: (d) => opts?.onDelta?.(d),
+        });
+      } else {
+        assistant = await this.deps.adapter.chat(messages, { tools: toolDefs });
+      }
       messages.push(assistant);
+
+      // 解析输出模式（首行 [MODE:xxx]，从展示内容中剥离）
+      const { mode, content } = parseMode(assistant.content);
 
       const ev: SessionEvent = {
         ts: Date.now(),
         type: 'assistant',
-        payload: { content: assistant.content, toolCalls: assistant.toolCalls?.length ?? 0 },
+        payload: { content, mode, toolCalls: assistant.toolCalls?.length ?? 0 },
       };
-      events.push(ev);
+      emit(ev);
       await this.deps.session.append(ctx.sessionId, ev);
 
       // 记录本轮中间说明（截断防刷屏）
-      if (assistant.content?.trim()) {
-        const note = assistant.content.trim().replace(/\s+/g, ' ');
+      if (content.trim()) {
+        const note = content.trim().replace(/\s+/g, ' ');
         if (note.length > 3) assistantNotes.push(`第${rounds}轮: ${note.slice(0, 160)}`);
       }
 
       // 没有工具调用 → 本轮完成
       if (!assistant.toolCalls?.length) {
         return {
-          answer: assistant.content ?? '',
+          answer: content,
           rounds,
           toolCalls,
           events,
           aborted: false,
+          messages: messages.slice(1), // 去 system：宿主续跑用
         };
       }
 
@@ -167,7 +211,7 @@ export class AgentLoop {
           type: 'tool',
           payload: { name: call.name, arguments: call.arguments, result },
         };
-        events.push(toolEv);
+        emit(toolEv);
         await this.deps.session.append(ctx.sessionId, toolEv);
       }
     }
@@ -188,6 +232,7 @@ export class AgentLoop {
       toolCalls,
       events,
       aborted: this.abortFlag,
+      messages: messages.slice(1), // 去 system：宿主续跑用
     };
   }
 }

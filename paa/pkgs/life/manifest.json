@@ -1,0 +1,151 @@
+{
+  "name": "life",
+  "version": "0.1.0",
+  "desc": "生活工作台全模块读写：目标分解/健身/养生(睡眠·拉伸·护肤·冥想·饮水)/日程/待办/记账，数据落盘 paa/data/life/",
+  "author": "shu",
+  "services": ["lifeStore"],
+  "tools": [
+    {
+      "name": "query_summary",
+      "desc": "读取用户数据摘要（资料、今日饮食/运动/饮水/睡眠/支出、最新体重、进行中目标、未完成待办、总资产）。做规划前先调用它了解现状",
+      "params": {},
+      "risk": 1
+    },
+    {
+      "name": "create_goal",
+      "desc": "创建目标，自动生成里程碑和配套待办。type: weight=减脂(自动从体重记录追踪) / saving=储蓄(从资产总额追踪) / habit=习惯(从打卡天数追踪) / custom=自定义",
+      "params": {
+        "title": { "type": "string", "desc": "目标标题", "required": true },
+        "type": { "type": "string", "desc": "weight | saving | habit | custom", "required": true },
+        "target": { "type": "number", "desc": "weight=目标体重kg、saving=金额、habit=天数、custom=数量", "required": true },
+        "endDate": { "type": "string", "desc": "YYYY-MM-DD，默认90天后" },
+        "habitField": { "type": "string", "desc": "habit类型必填：stretching | beauty | sleep" },
+        "unit": { "type": "string", "desc": "custom类型的单位" }
+      },
+      "risk": 3
+    },
+    {
+      "name": "add_weight",
+      "desc": "记录一次体重(kg)",
+      "params": {
+        "weight": { "type": "number", "desc": "体重kg", "required": true },
+        "date": { "type": "string", "desc": "YYYY-MM-DD，默认今天" }
+      },
+      "risk": 3
+    },
+    {
+      "name": "add_meal",
+      "desc": "记录饮食",
+      "params": {
+        "name": { "type": "string", "desc": "食物/餐名", "required": true },
+        "calories": { "type": "number", "desc": "热量kcal，默认300" },
+        "mealType": { "type": "string", "desc": "breakfast | lunch | dinner | snack" },
+        "date": { "type": "string", "desc": "YYYY-MM-DD，默认今天" },
+        "note": { "type": "string", "desc": "备注" }
+      },
+      "risk": 3
+    },
+    {
+      "name": "add_exercise",
+      "desc": "记录运动",
+      "params": {
+        "name": { "type": "string", "desc": "运动名", "required": true },
+        "duration": { "type": "number", "desc": "分钟，默认30" },
+        "calories": { "type": "number", "desc": "消耗kcal" },
+        "date": { "type": "string", "desc": "YYYY-MM-DD，默认今天" }
+      },
+      "risk": 3
+    },
+    {
+      "name": "add_water",
+      "desc": "记录饮水(ml)",
+      "params": {
+        "amount": { "type": "number", "desc": "毫升", "required": true },
+        "note": { "type": "string", "desc": "备注" },
+        "date": { "type": "string", "desc": "YYYY-MM-DD，默认今天" }
+      },
+      "risk": 3
+    },
+    {
+      "name": "add_sleep",
+      "desc": "记录睡眠（同一天重复记录会覆盖更新）",
+      "params": {
+        "hours": { "type": "number", "desc": "睡眠时长小时", "required": true },
+        "quality": { "type": "number", "desc": "质量1-5，默认3" },
+        "bedtime": { "type": "string", "desc": "就寝时间HH:MM，默认23:30" },
+        "wakeTime": { "type": "string", "desc": "起床时间HH:MM，默认07:00" },
+        "date": { "type": "string", "desc": "YYYY-MM-DD，默认今天" }
+      },
+      "risk": 3
+    },
+    {
+      "name": "add_stretch",
+      "desc": "记录拉伸/按摩",
+      "params": {
+        "type": { "type": "string", "desc": "类型，默认'拉伸'" },
+        "duration": { "type": "number", "desc": "分钟，默认15", "required": true },
+        "date": { "type": "string", "desc": "YYYY-MM-DD，默认今天" }
+      },
+      "risk": 3
+    },
+    {
+      "name": "add_beauty",
+      "desc": "记录护肤",
+      "params": {
+        "type": { "type": "string", "desc": "类型，默认'护肤'" },
+        "date": { "type": "string", "desc": "YYYY-MM-DD，默认今天" }
+      },
+      "risk": 3
+    },
+    {
+      "name": "add_meditation",
+      "desc": "记录冥想",
+      "params": {
+        "duration": { "type": "number", "desc": "分钟，默认15", "required": true },
+        "type": { "type": "string", "desc": "类型，默认'正念冥想'" },
+        "date": { "type": "string", "desc": "YYYY-MM-DD，默认今天" }
+      },
+      "risk": 3
+    },
+    {
+      "name": "add_todo",
+      "desc": "创建待办",
+      "params": {
+        "title": { "type": "string", "desc": "待办内容", "required": true },
+        "priority": { "type": "string", "desc": "high | mid | low，默认mid" },
+        "dueDate": { "type": "string", "desc": "YYYY-MM-DD，默认今天" },
+        "category": { "type": "string", "desc": "分类标签" }
+      },
+      "risk": 3
+    },
+    {
+      "name": "add_schedule",
+      "desc": "创建日程/提醒，支持每日/每周重复",
+      "params": {
+        "title": { "type": "string", "desc": "日程标题", "required": true },
+        "date": { "type": "string", "desc": "首次日期YYYY-MM-DD，默认今天" },
+        "startTime": { "type": "string", "desc": "HH:MM", "required": true },
+        "endTime": { "type": "string", "desc": "HH:MM（可选）" },
+        "category": { "type": "string", "desc": "life | study | work | health | finance" },
+        "note": { "type": "string", "desc": "备注" },
+        "rrule": { "type": "string", "desc": "none=单次(默认) daily=每天 weekly=每周 biweekly=每两周 monthly=每月" },
+        "rruleDays": { "type": "array", "desc": "weekly时生效，1=周一…7=周日，如[1,3,5]；不传则按首次日期所在星期" },
+        "rruleUntil": { "type": "string", "desc": "结束日期YYYY-MM-DD（可选）" },
+        "count": { "type": "number", "desc": "重复次数（如weekly+count=10表示持续10周；与rruleUntil二选一）" }
+      },
+      "risk": 3
+    },
+    {
+      "name": "add_transaction",
+      "desc": "记账（收入/支出）",
+      "params": {
+        "type": { "type": "string", "desc": "expense | income", "required": true },
+        "amount": { "type": "number", "desc": "金额", "required": true },
+        "category": { "type": "string", "desc": "分类，默认'其他'" },
+        "note": { "type": "string", "desc": "备注" },
+        "date": { "type": "string", "desc": "YYYY-MM-DD，默认今天" }
+      },
+      "risk": 3
+    }
+  ]
+}
