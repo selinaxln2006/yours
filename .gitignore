@@ -39,3 +39,6 @@ paa/runs/
 # PAA 记忆数据（个人数据不进版本库；种子在代码里，新环境自动重建）
 paa/memory/store.json
 paa/memory/*.json
+
+# PAA 产物数据（运行时生成的个人产物；代码与测试在仓库里）
+paa/artifacts/

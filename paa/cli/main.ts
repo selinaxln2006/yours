@@ -15,8 +15,10 @@ import { AgentLoop } from '../core/agent-loop.ts';
 import { SessionMgr } from '../core/session-mgr.ts';
 import { Permission, type AutonomyLevel } from '../core/permission.ts';
 import { JsonMemoryProvider, createDefaultPersonaSeed } from '../core/memory-provider.ts';
+import { FileArtifactProvider } from '../core/artifact-provider.ts';
 import { createCoreTools } from '../tools/core-tools.ts';
 import { createMemoryTools } from '../tools/memory-tools.ts';
+import { createArtifactTools } from '../tools/artifact-tools.ts';
 import { render } from './render.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -109,6 +111,9 @@ async function main(): Promise<void> {
   });
   await memory.init();
 
+  // 产物系统（C1/G7）：真实文件落盘 artifacts/<path>，index.json 管元数据
+  const artifacts = new FileArtifactProvider(path.join(PAA_ROOT, 'artifacts'));
+
   // 非交互记忆命令：--export-memory <path> / --import-memory <path>（记忆主权）
   if (exportMemory || importMemory) {
     if (exportMemory) {
@@ -160,6 +165,7 @@ async function main(): Promise<void> {
   const pipeline = new ToolPipeline(permission);
   for (const t of createCoreTools(root)) pipeline.register(t);
   for (const t of createMemoryTools(memory)) pipeline.register(t);
+  for (const t of createArtifactTools(artifacts)) pipeline.register(t);
 
   const adapter = createAdapter(config);
   const loop = new AgentLoop({
@@ -177,6 +183,8 @@ async function main(): Promise<void> {
   console.log(render.status(`沙箱根: ${root} | Autonomy: L${level} | 会话: ${sessionId}`));
   const memCount = (await memory.list()).length;
   console.log(render.status(`记忆: ${memCount} 条（paa/memory/store.json，L3 画像种子已注入）`));
+  const artCount = (await artifacts.list()).length;
+  console.log(render.status(`产物: ${artCount} 个（paa/artifacts/，真文件落盘+版本快照）`));
   console.log(render.status(`工具: ${pipeline.list().map((t) => t.name).join(', ')}`));
   console.log('');
 

@@ -183,6 +183,33 @@ P0 骨架三件套就位，行为对齐现状。真正的考验在 X.3 联测：
 - `paa/cli/`：render.ts（ANSI 卡片渲染）+ main.ts（交互循环 + `--once` 非交互单次执行）
 - `paa/test/`：smoke.ts（8 项：权限门/唯一匹配/黑名单/越界/会话/拒绝）+ agent-loop.ts（mock LLM 编排 2 轮收敛）
 
+---
+
+## P1 v1.2 — 产物系统 C1 / G7（2026-08-25）
+
+> 背景：P1 v1.1 记忆系统（G6）验收通过并 push（`d04c7ff`）后，按 C 支柱依赖顺序（记忆→产物→资源→进化）推进 G7。产物 = 磁盘真文件，不是聊天文本（对齐 WorkBuddy artifact 模式）。
+
+### 做了什么
+
+- `paa/core/artifact-provider.ts`：FileArtifactProvider —— 真文件落盘 `artifacts/<path>`（路径即主键，嵌套目录自动创建）+ `.index.json` 元数据（title/type/version/history/时间戳）+ 原子写（tmp+rename）+ 损坏自愈 + 版本快照（update 时旧版存 `<path>.v<N>`，保留 5 版）+ 路径越界纵深防御（任何阶段先 resolve 校验）
+- `paa/tools/artifact-tools.ts`：5 工具（create/update risk 3 写确认；read/list/versions risk 1 读自动）
+- `paa/cli/main.ts`：provider 注入 + 工具注册 + 启动打印产物数
+- `paa/test/artifact.ts`：9 项单测（真文件落盘/版本递增/快照文件/逃逸/重复创建/index 损坏自愈/嵌套目录）
+
+### 验证
+
+- tsc 0 错误；artifact 9/9 + memory 10/10 回归全绿
+- 真实 LLM 端到端（L3）：agent 自主 create → artifact_read → fs_read 物理路径 → 内容逐行一致；agent 主动指出"版本化未实测"→ 补跑 update → versions 确认 `.v1` 快照落盘 → fs_read 快照读到旧内容。闭环成立。
+
+### 踩坑
+
+- `constructor(private root: string)` 参数属性 → Node 原生 TS **strip-only 模式不支持**（`ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`）→ 改显式字段赋值。教训：**核心模块禁用 TS 参数属性**（test 已覆盖不到，运行时才炸）。
+- 测试抓到纵深防御缺口：update/read/versions 先查 index 再 resolve → `../` 若不在 index 会报"不存在"而非"越界"。虽不写盘（安全），但按"越界任何阶段先拒绝"原则修正为查 index 前先 resolve。
+
+### 下一步
+
+G5（C3 资源支柱：ToolPkg 动态加载 + MCP/HTTP）——最后一个缺口，完成后 G1-G7 全绿。
+
 ### 设计决策
 
 - **工具名去点号**（fs.read → fs_read）：DeepSeek/OpenAI 兼容 tools API 的 function.name 只允许 `^[a-zA-Z0-9_-]+$`，实测 400。这是对标时该想到的：Operit/DSH 工具名均无点。

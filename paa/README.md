@@ -65,6 +65,18 @@ node cli/main.ts --import-memory backup.json
 
 设计参考：Graphiti/Zep 三层架构（Episodic/Semantic/Community）+ 人脑分层-巩固-稀疏激活类比。完整设计见 `docs/architecture/paa-design-v2.md` C4 章节。
 
+## 产物系统（C1 / G7）
+
+**核心思想：产物 = 磁盘上的真实文件，不是聊天文本。** 落盘在 `paa/artifacts/<path>`，路径即主键。
+
+| 项 | 设计 |
+|---|---|
+| 落盘 | 真文件 `artifacts/<path>`（嵌套目录自动创建），fs_read 可直接读同一文件（与既有工具互通） |
+| 元数据 | `artifacts/.index.json`（title/type/version/history/时间戳），原子写（tmp+rename） |
+| 版本化 | artifact_update 自动快照旧版为 `<path>.v<N>`（保留最近 5 版），可 artifact_versions 查看 |
+| 工具 | create/update（risk 3 写，确认）/ read/list/versions（risk 1 读，自动） |
+| 安全 | 路径越界（`../`）在任何阶段先拒绝（纵深防御，不依赖 index 内容）；index 损坏自愈为空，磁盘文件不受影响 |
+
 ## 安全模型
 
 | 机制 | 说明 |
@@ -78,5 +90,5 @@ node cli/main.ts --import-memory backup.json
 ## 与前端的关系
 
 - 前端 `index.html` 冻结基线 v18 是**临时宿主/产品验证载体**，不是 agent 运行载体（浏览器沙箱够不到 FS/shell）
-- 本包（`paa/`）是宿主无关大脑层：CLI 宿主已跑通 G3 自诊断 / G4 自修改闭环 / P1 记忆
+- 本包（`paa/`）是宿主无关大脑层：CLI 宿主已跑通 G3 自诊断 / G4 自修改闭环 / P1 记忆 / **G7 产物持久**（artifact 真文件落盘+版本化）
 - 未来 Tauri 宿主可复用 `core/` 全部代码，只替换宿主入口与工具集
