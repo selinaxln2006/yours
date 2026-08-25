@@ -14,7 +14,9 @@ import { ToolPipeline } from '../core/tool-pipeline.ts';
 import { AgentLoop } from '../core/agent-loop.ts';
 import { SessionMgr } from '../core/session-mgr.ts';
 import { Permission, type AutonomyLevel } from '../core/permission.ts';
+import { JsonMemoryProvider, createDefaultPersonaSeed } from '../core/memory-provider.ts';
 import { createCoreTools } from '../tools/core-tools.ts';
+import { createMemoryTools } from '../tools/memory-tools.ts';
 import { render } from './render.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -42,6 +44,12 @@ const SYSTEM_PROMPT = `你是枢（Shū），俪宁的跨界 AI 搭档。锐利�
 - 探索类任务先定步数预算（如"最多 5 步"），到预算即给阶段性结论，不无限扩散
 - 每轮工具调用必须朝完成标准推进；与目标无关的发现先记录不执行
 
+记忆纪律（P1）：
+- 对话中发现的重要事实/偏好/决策，用 memory_save 主动固化（选好 type 和 tags；默认存 L1 事实层）
+- 相关记忆已自动注入本提示（分层：L3 画像 → L2 场景块 → L1 事实；L0 原文永不注入）
+- 零散事实积累多了，用 memory_consolidate 聚合为 L2 场景块 / 更新 L3 画像（agent 生成摘要）
+- 不确定是否该存的：先存（记忆是内部动作，宁多勿漏，错误可 memory_forget）
+
 所有写操作（fs_write/fs_append/fs_patch）和 shell_run 会请求用户确认（y/n/a：a=本会话不再询问该工具）；被拒绝就换方案。`;
 
 async function loadConfig(): Promise<LLMConfig | null> {
@@ -65,10 +73,18 @@ async function loadConfig(): Promise<LLMConfig | null> {
   }
 }
 
-function parseArgs(argv: string[]): { root: string; level: AutonomyLevel; once: string | null } {
+function parseArgs(argv: string[]): {
+  root: string;
+  level: AutonomyLevel;
+  once: string | null;
+  exportMemory: string | null;
+  importMemory: string | null;
+} {
   let root = WORKSPACE_ROOT;
   let level: AutonomyLevel = 2;
   let once: string | null = null;
+  let exportMemory: string | null = null;
+  let importMemory: string | null = null;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--root' && argv[i + 1]) root = path.resolve(argv[++i]);
     if (argv[i] === '--level') {
@@ -77,12 +93,45 @@ function parseArgs(argv: string[]): { root: string; level: AutonomyLevel; once: 
       i++;
     }
     if (argv[i] === '--once' && argv[i + 1]) once = argv[++i];
+    if (argv[i] === '--export-memory' && argv[i + 1]) exportMemory = path.resolve(argv[++i]);
+    if (argv[i] === '--import-memory' && argv[i + 1]) importMemory = path.resolve(argv[++i]);
   }
-  return { root, level, once };
+  return { root, level, once, exportMemory, importMemory };
 }
 
 async function main(): Promise<void> {
-  const { root, level, once } = parseArgs(process.argv.slice(2));
+  const { root, level, once, exportMemory, importMemory } = parseArgs(process.argv.slice(2));
+
+  // 记忆系统（C4）：JSON 文件存储 + L3 画像种子（首次自动初始化）
+  const memory = new JsonMemoryProvider({
+    filePath: path.join(PAA_ROOT, 'memory', 'store.json'),
+    seed: createDefaultPersonaSeed(),
+  });
+  await memory.init();
+
+  // 非交互记忆命令：--export-memory <path> / --import-memory <path>（记忆主权）
+  if (exportMemory || importMemory) {
+    if (exportMemory) {
+      const records = await memory.exportAll();
+      const { writeFile } = await import('node:fs/promises');
+      await writeFile(exportMemory, JSON.stringify({ version: 'paa-memory-v1.1', exportedAt: Date.now(), records }, null, 2), 'utf8');
+      console.log(`✅ 已导出 ${records.length} 条记忆 → ${exportMemory}`);
+    }
+    if (importMemory) {
+      const { readFile: readFile2 } = await import('node:fs/promises');
+      const raw = JSON.parse(await readFile2(importMemory, 'utf8')) as {
+        records: Parameters<typeof memory.importAll>[0];
+      };
+      if (!Array.isArray(raw.records)) {
+        console.error('❌ 导入文件格式错误：缺少 records 数组');
+        process.exit(1);
+      }
+      const n = await memory.importAll(raw.records);
+      console.log(`✅ 已导入/覆盖 ${n} 条记忆`);
+    }
+    process.exit(0);
+  }
+
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   // 会话级放行集合：a=always allow 加入，重启清除
   const trustedTools = new Set<string>();
@@ -110,6 +159,7 @@ async function main(): Promise<void> {
   const permission = new Permission(level);
   const pipeline = new ToolPipeline(permission);
   for (const t of createCoreTools(root)) pipeline.register(t);
+  for (const t of createMemoryTools(memory)) pipeline.register(t);
 
   const adapter = createAdapter(config);
   const loop = new AgentLoop({
@@ -117,6 +167,7 @@ async function main(): Promise<void> {
     pipeline,
     session,
     systemPrompt: SYSTEM_PROMPT,
+    memoryProvider: memory,
     maxRounds: 12,
   });
 
@@ -124,6 +175,8 @@ async function main(): Promise<void> {
   const ctx = { sessionId, cwd: root, ask, audit };
 
   console.log(render.status(`沙箱根: ${root} | Autonomy: L${level} | 会话: ${sessionId}`));
+  const memCount = (await memory.list()).length;
+  console.log(render.status(`记忆: ${memCount} 条（paa/memory/store.json，L3 画像种子已注入）`));
   console.log(render.status(`工具: ${pipeline.list().map((t) => t.name).join(', ')}`));
   console.log('');
 

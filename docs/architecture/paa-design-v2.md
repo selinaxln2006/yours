@@ -176,6 +176,48 @@ system prompt = 人格 prompt + 相关记忆（memory.search(用户输入) top 3
 
 **导入导出**：设置页 `memory.import(JSON)` / `memory.export()` —— 可以把 WorkBuddy 的 MEMORY.md、其他 Agent 的记忆文件导进来（格式转换层）。
 
+### C4 修订 · P1 v1.1（2026-08-25，吸收 Graphiti/Zep 三层架构 + 俪宁人脑直觉）
+
+**背景**：俪宁提出两个质疑——① 每条会话都存原文，维护成本 + 回忆 token 会不会爆炸；② 大模型认知与人脑架构相似，memory 是否可模仿 CNN 存储。研究结论：
+
+- CNN = 权重即记忆 → 本质是模型训练，黑盒不可审计不可导出，违反记忆主权 → **不做**
+- 人脑正确类比 = **分层 + 巩固 + 稀疏激活**（Atkinson-Shiffrin 感觉/工作/长期记忆 ≈ L0-L3；海马体重放固化 ≈ consolidate；回忆稀疏激活 ≈ top-K 注入）——恰好验证本修订
+- Graphiti（Zep 底层，30k+ stars）三层：Episodic 原文层 / Semantic 实体事实层 / Community 摘要层。**关键洞察：存储不花钱，注入才花钱**——原文全量存但永不进 LLM 上下文
+
+**v1.1 数据模型**（v1 基础上扩展，向后兼容）：
+
+```javascript
+Store.data.memories = [{
+  id: 'mem_001',
+  layer: 'L0' | 'L1' | 'L2' | 'L3',     // 原文/事实/场景/画像
+  type: 'fact' | 'preference' | 'episodic' | 'skill-note' | 'persona',
+  content: '俪宁的减重目标是 15 斤，截止 12 月',
+  tags: ['fitness', 'goal'],
+  source: 'user' | 'agent' | 'import',
+  sourceRef: { sessionId, eventId },    // 可追溯（审计/纠错前提）
+  validAt: 1723872000000,               // 事实开始为真的时间
+  invalidAt: null,                      // 失效时间（Graphiti 同款：不硬删，标记失效）
+  createdAt, updatedAt
+}]
+```
+
+**分层定义与注入策略**：
+
+| 层 | 存什么 | 注入策略 |
+|----|--------|---------|
+| L0 | 原始交互记录（可选开关） | **永不注入**，只溯源/审计（后悔药） |
+| L1 | 原子事实（save 默认层） | 关键词匹配，补足 top-N |
+| L2 | 场景知识块（consolidate 聚合） | 标签匹配 top 2 |
+| L3 | 长期画像 persona（种子 + consolidate） | 每轮常驻 1-2 条 |
+
+**token 预算硬上限**：每轮记忆注入 ≤ ~510 tokens（L3 2×~80 + L2 2×~100 + L1 3×~50）。本地关键词检索 0 API 成本。注入账本写入审计日志（俪宁要求 token 明细可见）。
+
+**新增 memory.consolidate**：agent 生成摘要、provider 记账——把 N 条 L1 聚合为 L2 场景块 / 更新 L3 画像，被聚合的 L1 标记失效。增量局部更新（只重算受影响的块），不刷新全局。写侧除 consolidate 外零 LLM。
+
+**save 自动失效规则**：同 tag+type 且内容不同的活跃记录 → 旧记录自动 invalidAt（Graphiti 边失效的轻量版，解决"自信地记住了过期信息"）。
+
+**升级路径（何时上真图）**：任一信号触发——① 记忆量 >500 且关键词误检 ② 关系密集需求 ③ 时间线追溯需求。届时引入 Graphiti 风格时序图谱，数据模型已预留 validAt/invalidAt/sourceRef，迁移成本 ≈ 零。
+
 ---
 
 ### C1 · 产物系统（Workspace + Artifacts）

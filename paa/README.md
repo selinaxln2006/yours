@@ -1,55 +1,82 @@
-# PAA Core — Phase B 本地宿主（CLI）
+# PAA Core — 宿主无关大脑层（TS v2 + CLI 宿主）
 
 Personal AI Agent Framework 的宿主无关大脑层 + 本地文件系统宿主。
-从生活工作台 PWA（`index.html`）中抽取的 AgentLoop / LLMAdapter / ToolPipeline / Skills 注册表，
-改造成依赖注入形态——同一个大脑，换宿主（CLI / 未来 Tauri / 未来云端）不用改循环本体。
+自研核心四件套（AgentLoop / ToolPipeline / LLMAdapter / SessionMgr）+ C4 记忆系统。
+同一个大脑，换宿主（CLI / 未来 Tauri / 未来云端）不用改循环本体。
 
 ## 目录结构
 
 ```
 paa/
-  package.json          # ESM 包，bin: paa
-  config.example.json   # LLM 配置模板（复制为 config.json 填真实 key）
-  src/
-    cli.js              # CLI 宿主入口
-    util.js             # today/now/uid 纯函数（Node 版 U）
-    core/
-      skills.js         # Skill 注册表（注册/查询/派发/tools 协议转换）
-      tool-pipeline.js  # 工具执行管道（readOnly 自动 / 写操作 pending）
-      llm-adapter.js    # OpenAI + Anthropic 协议封装（config 注入）
-      agent-loop.js     # 健壮循环引擎（maxRounds/重复检测/abort/超时）
-    tools/
-      fs-tools.js       # fs.read(切片) / fs.grep(正则定位) / fs.check(语法验证) / fs.write / shell.run
+  package.json          # ESM；npm run check (tsc) / test (node --test) / cli
+  config.json           # LLM 配置（apiUrl + apiKey + model；勿提交真实 key）
+  core/
+    types.ts            # 核心类型（ChatMessage/ToolCall/MemoryRecord/MemoryProvider）
+    agent-loop.ts       # 循环引擎（maxRounds/abort/inject/P1 记忆注入钩子）
+    tool-pipeline.ts    # 工具管道（权限门 → 执行 → 审计）
+    llm-adapter.ts      # OpenAI 兼容协议封装
+    session-mgr.ts      # 会话事件溯源（JSONL）
+    permission.ts       # Autonomy L0-L4 + risk 分级（risk4 永远确认）
+    memory-provider.ts  # C4 记忆系统：JsonMemoryProvider（分层 L0-L3 + 自动失效 + consolidate）
+  tools/
+    core-tools.ts       # fs_read/fs_write/fs_append/fs_patch/fs_list/fs_grep/shell_run
+    memory-tools.ts     # memory_search/list/save/consolidate/forget
+  cli/
+    main.ts             # CLI 宿主（交互 + --once + --export/--import-memory）
+    render.ts           # 终端渲染
+  test/
+    smoke.ts            # P0 冒烟 8/8
+    agent-loop.ts       # 循环收敛
+    memory.ts           # P1 记忆系统 10/10
+  memory/
+    store.json          # 记忆存储（自动生成，L3 画像种子初始化）
 ```
 
 ## 用法
 
 ```bash
-# 配置（三选一，优先级 flags > env > config.json）
-copy config.example.json config.json   # 或
-set PAA_API_KEY=sk-xxx                 # 或命令行 --api-key
+# 检查 / 测试
+npm run check          # tsc --noEmit
+npm run test           # node --test test/
 
-# 运行
-node paa/src/cli.js "读取 index.html 并总结 AgentLoop 的实现"
-node paa/src/cli.js --yes "修复 paa/src/core/agent-loop.js 语法错误并用 node --check 验证"
-node paa/src/cli.js --yes --root c:\Users\selin\WorkBuddy\20260812100418 "检查 git status"
+# 运行（交互）
+node cli/main.ts                          # 默认 L2，沙箱根=工作区
+node cli/main.ts --root <dir> --level 3   # 指定沙箱根与 Autonomy
+
+# 单次执行
+node cli/main.ts --once "用 fs_grep 搜索 docs/DEVLOG.md 里的 P1 v1.1"
+
+# 记忆主权：导出 / 导入
+node cli/main.ts --export-memory backup.json
+node cli/main.ts --import-memory backup.json
 ```
 
-写操作（`fs__write` / `fs__shell`）默认逐条 y/n 确认；`--yes` 全自动。
+## 记忆系统（C4，P1 v1.1）
 
-只读工具（`fs__read` / `fs__grep` / `fs__check`）自动执行不确认。推荐工作流：`fs__grep` 定位行号 → `fs__read` offset/limit 切片精读 → 修改 → `fs__check` 验证。
+| 项 | 设计 |
+|---|---|
+| 分层 | L0 原文（永不注入，只溯源）/ L1 事实（save 默认）/ L2 场景块（consolidate）/ L3 画像（常驻） |
+| 注入预算 | 每轮 ≤ ~510 tokens：L3 常驻 2 条 → L2 命中 top2 → L1 补足；L0 永不进上下文 |
+| 自动失效 | save 同 tag+type 内容不同的旧记录 → invalidAt（Graphiti 边失效轻量版） |
+| 遗忘 | memory_forget 软删（invalidAt），risk 4 永远确认 |
+| 精炼 | memory_consolidate：agent 生成摘要，provider 记账，源记忆失效 |
+| 持久化 | JSON 原子写（tmp+rename）+ 损坏自愈（备份重建）+ 导入导出 |
+| 种子 | 首次启动注入 6 条 L3 画像（createDefaultPersonaSeed） |
+
+设计参考：Graphiti/Zep 三层架构（Episodic/Semantic/Community）+ 人脑分层-巩固-稀疏激活类比。完整设计见 `docs/architecture/paa-design-v2.md` C4 章节。
 
 ## 安全模型
 
 | 机制 | 说明 |
 |------|------|
-| root 沙箱 | 所有路径解析到 root 内，越界拒绝（EPERM） |
-| 大小上限 | 读 300KB / 写 500KB，防上下文爆炸 |
-| 命令黑名单 | rm -rf / Remove-Item -Recurse / format / shutdown / taskkill /f 等拒绝 |
-| 写操作确认 | CLI 逐条询问；`--yes` 显式授权 |
+| root 沙箱 | 所有 fs 路径限制在 root 内，越界拒绝 |
+| 工具名硬约束 | `[a-zA-Z0-9_-]`（LLM function calling 要求；点号会 400） |
+| 命令黑名单 | rm -rf / del /s / format / shutdown / diskpart 等拒绝 |
+| 权限分级 | risk1 读自动 / risk2 普通 L2+ 自动 / risk3 写确认 / risk4 永远确认（memory_forget、shell_run） |
+| Autonomy | L0 全问 → L4 全放行（除 risk4）；`/level N` 切换；`/trust` 会话级放行 |
 
 ## 与前端的关系
 
-- 前端 `index.html` 中的 AgentLoop/LLMAdapter 为**冻结基线**（v18），此包是其宿主无关重构
-- 未来 Tauri 宿主可复用 `core/` 全部代码，只替换 `tools/` 与宿主入口
-- life skill（工作台 13 工具）属 PWA 工具集，未迁移；Phase C 按需抽离
+- 前端 `index.html` 冻结基线 v18 是**临时宿主/产品验证载体**，不是 agent 运行载体（浏览器沙箱够不到 FS/shell）
+- 本包（`paa/`）是宿主无关大脑层：CLI 宿主已跑通 G3 自诊断 / G4 自修改闭环 / P1 记忆
+- 未来 Tauri 宿主可复用 `core/` 全部代码，只替换宿主入口与工具集

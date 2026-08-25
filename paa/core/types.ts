@@ -60,20 +60,50 @@ export interface ToolResult {
   error?: string;
 }
 
-/** 记忆记录（P1 完整实现；P0 仅定义类型） */
+/** 记忆层级（P1 v1.1：L0 原文 / L1 事实 / L2 场景块 / L3 画像） */
+export type MemoryLayer = 'L0' | 'L1' | 'L2' | 'L3';
+
+/** 记忆类型（v1.1 加 persona） */
+export type MemoryType = 'fact' | 'preference' | 'episodic' | 'skill-note' | 'persona';
+
+/** 记忆记录（P1 v1.1 完整实现；向后兼容 P0 字段） */
 export interface MemoryRecord {
   id: string;
-  type: 'fact' | 'preference' | 'episodic' | 'skill-note';
+  /** v1.1：层级。默认 L1 */
+  layer?: MemoryLayer;
+  type: MemoryType;
   content: string;
   tags: string[];
   source: 'user' | 'agent' | 'import';
+  /** v1.1：来源引用（可追溯/纠错） */
+  sourceRef?: { sessionId: string; eventId?: number };
+  /** v1.1：事实开始为真的时间（Graphiti 同款） */
+  validAt?: number;
+  /** v1.1：失效时间。null/缺省 = 有效；已失效记录不参与检索 */
+  invalidAt?: number | null;
   createdAt: number;
   updatedAt: number;
 }
 
-/** 记忆提供者接口（P1 实现；P0 AgentLoop 预留钩子） */
+/** 记忆提供者接口（P1 实现；P0 AgentLoop 只用了 search，其余 P1 补齐） */
 export interface MemoryProvider {
+  /** 分层检索：L3 常驻优先 → L2 标签匹配 → L1 关键词补足；L0 永不返回 */
   search(query: string, topN?: number): Promise<MemoryRecord[]>;
+  /** 保存记忆：默认 L1；同 tag+type 内容不同的活跃记录自动失效（Graphiti 边失效轻量版） */
+  save(record: Omit<MemoryRecord, 'id' | 'createdAt' | 'updatedAt'>): Promise<MemoryRecord>;
+  /** 按类型/层级列出（含已失效，可加 limit） */
+  list(opts?: { type?: MemoryType; layer?: MemoryLayer; limit?: number }): Promise<MemoryRecord[]>;
+  /** 遗忘：软删（invalidAt=now），永远确认的工具 */
+  forget(id: string): Promise<boolean>;
+  /** 聚合精炼：把 sourceIds 的 L1 聚合为一条 L2/L3（agent 生成 summary，provider 记账） */
+  consolidate(
+    summary: string,
+    opts: { layer: 'L2' | 'L3'; type?: MemoryType; tags?: string[]; sourceIds?: string[] },
+  ): Promise<MemoryRecord>;
+  /** 全量导出（记忆主权：跨 Agent 迁移） */
+  exportAll(): Promise<MemoryRecord[]>;
+  /** 全量导入（幂等：按 id 覆盖） */
+  importAll(records: MemoryRecord[]): Promise<number>;
 }
 
 /** LLM 配置 */

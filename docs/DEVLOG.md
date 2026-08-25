@@ -252,3 +252,41 @@ paa/
 - 待俪宁重测同指令：验收标准 = fs_grep 检索 / shell 只碰 node-npm-git / 耗尽有总结 / 确认 ≤3 次。
 
 ---
+
+## P1 v1.1 — C4 记忆系统正式落地（2026-08-25）
+
+> 背景：俪宁提出两个设计质疑——① 每条会话都存原文，维护成本 + 回忆 token 会不会爆炸；② 大模型认知与人脑架构相似，memory 是否可模仿 CNN。三轮研究结论：
+> - **CNN 不做**：权重即记忆 = 模型训练，黑盒不可审计不可导出，违反记忆主权
+> - **人脑正确类比**：分层 + 巩固 + 稀疏激活（Atkinson-Shiffrin / 海马体巩固 / 稀疏检索）——恰好验证分层设计
+> - **Graphiti（Zep 底层）三层**：Episodic 原文 / Semantic 实体事实 / Community 摘要。关键洞察：**存储不花钱，注入才花钱**——原文全量存但永不进上下文
+
+### 做了什么
+
+- **types.ts**：MemoryRecord 扩展（layer L0-L3 / type 加 persona / sourceRef / validAt / invalidAt，向后兼容）；MemoryProvider 接口扩展为 search+save+list+forget+consolidate+exportAll+importAll
+- **core/memory-provider.ts**（新）：JsonMemoryProvider——JSON 文件存储（paa/memory/store.json）+ 原子写（tmp+rename）+ 损坏自愈（备份后重建）+ 分层检索（L3 常驻 2 条 → L2 标签匹配 top2 → L1 关键词补足，**L0 永不注入**）+ save 自动失效（同 tag+type 内容不同旧记录 invalidAt）+ consolidate（agent 摘要、provider 记账、源记忆失效）+ export/import（记忆主权）+ L3 画像种子（createDefaultPersonaSeed，6 条从 WorkBuddy MEMORY.md 编译）
+- **tools/memory-tools.ts**（新）：5 工具注册——memory_search/list（risk 1 自动）/ memory_save（risk 2）/ memory_consolidate（risk 3）/ memory_forget（risk 4 永远确认）
+- **cli/main.ts**：provider 构造注入 AgentLoop（P0 预埋钩子接通）+ 记忆纪律入 system prompt + 启动显示记忆条数 + `--export-memory` / `--import-memory` 独立命令
+- **paa-design-v2.md**：C4 章节加 P1 v1.1 修订段（分层模型 + token 预算 + 升级路径）
+
+### 设计决策
+
+- **工具名用下划线不用点号**：LLM function calling 硬约束 `^[a-zA-Z0-9_-]+$`——`memory.search` 直接 400，`fs_read` 用下划线所以 P0 一直没踩到。这是端到端实测才暴露的（单元测试全过）。
+- **save 是 risk 2 不是 risk 3**：记忆是内部动作（大胆），结构变化（consolidate）才确认，遗忘永远确认。
+- **provider 层也做 layer/type 校验**：纵深防御，tools 层与 provider 层双保险。
+
+### 验证结果
+
+- `tsc --noEmit`：0 错误
+- `test/memory.ts`：10/10 ✅（种子/save/自动失效/分层检索/L0 永不返回/forget/consolidate/export-import 幂等/损坏自愈/L0 开关/非法输入）
+- 真实 LLM 端到端：`--once "用 memory_search 检索俪宁职业方向"` → agent 自主调 memory_search → 返回 2 条 L3 画像 → 结构化总结（量化主线/产品支线/MFE 出口）✅
+- `--export-memory`：格式完整（version/exportedAt/records）
+
+### 反思
+
+- **单元测试通过 ≠ API 兼容**：工具名带点号是 10 个单测全过后端到端 400 才暴露的。教训：注册进真实 LLM 链路的工具命名必须从一开始就按 provider 约束设计（下划线），测试要覆盖"发往真实 API 的 schema"。
+- 分层检索的 L3 常驻策略效果明显：agent 第一轮对话就"懂你"（画像种子），不需要从零积累。
+- 上图信号（>500 条/关系密集/时间线追溯）未触发，v1 不背图数据库成本。
+
+---
+
+
