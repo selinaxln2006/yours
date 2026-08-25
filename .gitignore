@@ -43,6 +43,9 @@ paa/memory/*.json
 # PAA 产物数据（运行时生成的个人产物；代码与测试在仓库里）
 paa/artifacts/
 
+# PAA 生活数据（个人生活 JSON：收支/体重/日程等，绝不进仓库）
+paa/data/
+
 # PAA 测试输出（临时重定向文件，不进仓库）
 paa/test-*.txt
 paa/test-out.txt
