@@ -7,7 +7,7 @@
 // 后续挂载点：re-plan 钩子（④）、并行子任务（⑤）、--resume 续跑（③）
 // ============================================================
 
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { ChatMessage, MemoryProvider, SessionEvent } from './types.ts';
 import type { LLMAdapter } from './llm-adapter.ts';
@@ -232,14 +232,66 @@ export class Planner {
     await writeFile(path.join(dir, 'task-tree.json'), JSON.stringify(tree, null, 2), 'utf8');
   }
 
-  /** 阶段二：按拓扑序执行子任务队列（瞬时网络错误自动重试 1 次） */
-  async run(goal: string, ctx: AgentLoopCtx): Promise<PlannerResult> {
-    const tree = await this.plan(goal, ctx);
+  /** 加载已落盘任务树（A3 断点续跑入口；不存在/损坏返回 null） */
+  async loadTree(sessionId: string): Promise<TaskTree | null> {
+    try {
+      const raw = await readFile(
+        path.join(this.deps.session.sessionDir(sessionId), 'task-tree.json'),
+        'utf8',
+      );
+      const tree = JSON.parse(raw) as TaskTree;
+      if (!tree || typeof tree.goal !== 'string' || !Array.isArray(tree.tasks) || tree.tasks.length === 0) {
+        return null;
+      }
+      // 归一化：缺失/非法 status → pending；补齐字段
+      for (const t of tree.tasks) {
+        if (t.status !== 'done' && t.status !== 'failed' && t.status !== 'running') t.status = 'pending';
+        t.desc = String(t.desc ?? '');
+        t.verify = String(t.verify ?? '');
+        t.deps = Array.isArray(t.deps) ? t.deps.map((d) => String(d)) : [];
+      }
+      return tree;
+    } catch {
+      return null;
+    }
+  }
+
+  /** 阶段二：按拓扑序执行子任务队列（瞬时网络错误自动重试 1 次）
+   *  resumeTree 传入 = A3 断点续跑：跳过已 done 子任务（保留原结果/note）、
+   *  running 降级 pending 重跑（进程死前未完成）、failed 重试。plan() 不重新调用。
+   */
+  async run(goal: string, ctx: AgentLoopCtx, resumeTree?: TaskTree | null): Promise<PlannerResult> {
+    const tree = resumeTree ?? (await this.plan(goal, ctx));
+
+    // 【A3 续跑语义】running = 进程死前未完成 → 降级 pending 重跑；先落盘再进入执行
+    if (resumeTree) {
+      let dirty = false;
+      for (const t of tree.tasks) {
+        if (t.status === 'running') {
+          t.status = 'pending';
+          dirty = true;
+        }
+      }
+      if (dirty) await this.saveTree(tree, ctx);
+    }
+
     const order = topoSort(tree.tasks);
     const outcomes: Record<string, TaskOutcome> = {};
-    let doneCount = 0;
+    // 续跑：已完成子任务计入 doneCount（避免重复计数）
+    let doneCount = tree.tasks.filter((t) => t.status === 'done').length;
 
     subtaskLoop: for (const task of order) {
+      // 【A3 断点续跑】跳过已完成子任务：保留原结果与产出 note（供后续子任务引用）
+      if (task.status === 'done') {
+        outcomes[task.id] = {
+          status: 'done',
+          rounds: task.rounds ?? 0,
+          toolCalls: task.toolCalls ?? 0,
+          note: task.note,
+        };
+        continue;
+      }
+
       task.status = 'running';
       await this.saveTree(tree, ctx);
 
@@ -372,7 +424,7 @@ export class Planner {
     }
 
     const summary = [
-      `✅ 目标执行完成：${doneCount}/${order.length} 个子任务成功`,
+      `✅ 目标执行完成：${doneCount}/${order.length} 个子任务成功${resumeTree ? '（🔄 断点续跑）' : ''}`,
       ...order.map(
         (t) => `- ${t.id} [${t.status}] ${t.desc}${t.note ? ` — ${t.note}` : ''}`,
       ),

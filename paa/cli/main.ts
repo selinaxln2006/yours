@@ -145,6 +145,7 @@ function parseArgs(argv: string[]): {
   level: AutonomyLevel;
   once: string | null;
   goal: string | null;
+  resume: string | null;
   yes: boolean;
   agent: string | null;
   exportMemory: string | null;
@@ -154,6 +155,7 @@ function parseArgs(argv: string[]): {
   let level: AutonomyLevel = 2;
   let once: string | null = null;
   let goal: string | null = null;
+  let resume: string | null = null;
   let yes = false;
   let agent: string | null = null;
   let exportMemory: string | null = null;
@@ -167,12 +169,13 @@ function parseArgs(argv: string[]): {
     }
     if (argv[i] === '--once' && argv[i + 1]) once = argv[++i];
     if (argv[i] === '--goal' && argv[i + 1]) goal = argv[++i];
+    if (argv[i] === '--resume' && argv[i + 1]) resume = argv[++i];
     if (argv[i] === '--yes') yes = true;
     if (argv[i] === '--agent' && argv[i + 1]) agent = argv[++i];
     if (argv[i] === '--export-memory' && argv[i + 1]) exportMemory = path.resolve(argv[++i]);
     if (argv[i] === '--import-memory' && argv[i + 1]) importMemory = path.resolve(argv[++i]);
   }
-  return { root, level, once, goal, yes, agent, exportMemory, importMemory };
+  return { root, level, once, goal, resume, yes, agent, exportMemory, importMemory };
 }
 
 /** agent 角色配置（paa/agents/*.json）：工具白名单 + 人格 prompt + 默认 Autonomy */
@@ -199,7 +202,7 @@ async function loadAgent(name: string): Promise<AgentConfig | null> {
 }
 
 async function main(): Promise<void> {
-  const { root, level, once, goal, yes, agent: agentName, exportMemory, importMemory } = parseArgs(process.argv.slice(2));
+  const { root, level, once, goal, resume, yes, agent: agentName, exportMemory, importMemory } = parseArgs(process.argv.slice(2));
 
   // --agent <name>：角色配置（工具白名单 + 人格 prompt + 默认 Autonomy）
   const agentCfg = agentName ? await loadAgent(agentName) : null;
@@ -270,7 +273,17 @@ async function main(): Promise<void> {
   }
 
   const session = new SessionMgr(path.join(PAA_ROOT, 'runs'));
-  const sessionId = await session.newSession();
+  // --resume：复用指定会话目录（断点续跑，事件续写同一 events.jsonl）；否则新建
+  let sessionId: string;
+  if (resume) {
+    if (!/^\d{10,}$/.test(resume)) {
+      console.error(`❌ resume 会话 ID 非法: "${resume}"（应为 runs/ 下的数字目录名，如 runs/1785432100000）`);
+      process.exit(1);
+    }
+    sessionId = resume;
+  } else {
+    sessionId = await session.newSession();
+  }
 
   const audit = (line: string): void => console.log(render.audit(line));
   const permission = new Permission(effectiveLevel);
@@ -350,8 +363,10 @@ async function main(): Promise<void> {
   console.log('');
 
   // goal 模式（A1 planner）：模糊大目标 → 任务树 → 子任务队列自动执行
+  // resume 模式（A3 planner）：--resume <sid> 从已落盘任务树断点续跑
   // 用法：node cli/main.ts --goal "给 console 加多会话功能" [--level N] [--root <dir>]
-  if (goal !== null) {
+  //      node cli/main.ts --resume 1785432100000 [--level N] [--root <dir>]
+  if (goal !== null || resume !== null) {
     const planner = new Planner({
       adapter,
       pipeline,
@@ -367,11 +382,43 @@ async function main(): Promise<void> {
       },
     });
     console.log(render.banner());
-    console.log(render.status(`🎯 目标模式（planner）: ${goal}`));
     console.log(render.status(`沙箱根: ${root} | Autonomy: L${effectiveLevel} | 会话: ${sessionId}`));
+
+    // 【A3 断点续跑】优先于 --goal：加载已落盘任务树，跳过已完成子任务继续执行
+    if (resume !== null) {
+      const tree = await planner.loadTree(resume);
+      if (!tree) {
+        console.log(render.error(`❌ 会话 ${resume} 无可用任务树（runs/${resume}/task-tree.json 不存在或损坏），无法续跑`));
+        rl.close();
+        closeMcp();
+        return;
+      }
+      const doneCount = tree.tasks.filter((t) => t.status === 'done').length;
+      console.log(render.status(`🔄 续跑模式: 恢复会话 ${resume}（已完成 ${doneCount}/${tree.tasks.length}，跳过已完成，未完成继续执行）`));
+      console.log(render.status(`🎯 目标: ${tree.goal}`));
+      try {
+        const result = await planner.run(tree.goal, ctx, tree);
+        console.log('');
+        for (const [id, oc] of Object.entries(result.outcomes)) {
+          const icon = oc.status === 'done' ? '✅' : '❌';
+          console.log(render.status(`${icon} 子任务 ${id}: ${oc.status}（${oc.rounds} 轮 / ${oc.toolCalls} 次工具调用）`));
+          if (oc.note) console.log(`   ${oc.note}`);
+        }
+        console.log('');
+        console.log(render.assistant(result.summary));
+        console.log(render.status(`任务树已更新: runs/${sessionId}/task-tree.json`));
+      } catch (e) {
+        console.log(render.error(e instanceof Error ? e.message : String(e)));
+      }
+      rl.close();
+      closeMcp();
+      return;
+    }
+
+    console.log(render.status(`🎯 目标模式（planner）: ${goal}`));
     console.log(render.status('…生成任务树'));
     try {
-      const result = await planner.run(goal, ctx);
+      const result = await planner.run(goal!, ctx);
       console.log('');
       for (const [id, oc] of Object.entries(result.outcomes)) {
         const icon = oc.status === 'done' ? '✅' : '❌';

@@ -156,7 +156,7 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 
 **下一步**：A2 Compaction（上下文预算 + 摘要替换，50+ 轮不爆）→ A3 断点续跑。S 线：S2 云同步（18 键增量 + 会话游标）。
 
-### A2 Compaction 完成（S5 尾，2026-08-27，commit 待定）
+### A2 Compaction 完成（S5 尾，2026-08-27，commit `8b09704`）
 
 **实现**：新 `core/compactor.ts`（210 行）+ 挂载 `agent-loop.ts` 消息组装点（每轮 LLM 调用前检查预算）。
 
@@ -176,6 +176,20 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 - 真实 API：`--goal` 短任务 3/3 done（默认预算不触发，无回归）；全量测试 57/57
 
 **启用方式**：AgentLoop 默认自动创建 Compactor（deps.compactor undefined=启用 / null=禁用 / 实例=自定义）。planner 子任务、console chat、CLI 全部自动继承，宿主零改动。
+
+### A3 断点续跑完成（S5 尾，2026-08-27）
+
+**实现**：`planner.ts` 扩展 + `cli/main.ts` 新增 `--resume <sid>`。
+- `Planner.run(goal, ctx, resumeTree?)`：传入 `resumeTree` 则跳过 plan()（不重新生成任务树），**跳过已 done 子任务**（保留原结果 rounds/toolCalls/note，供后续子任务引用）、**running 降级 pending 重跑**（进程死前未完成）、**failed 重试**；doneCount 初始化为已 done 数避免重复计数，summary 标注 `🔄 断点续跑`。
+- `Planner.loadTree(sid)`：读 `runs/<sid>/task-tree.json`（=断点状态文件），不存在/损坏返回 null，非法 status 归一化 pending。
+- CLI：`--resume <sid>` 复用同一会话目录（事件续写同一 events.jsonl，会话 ID 校验 `/^\d{10,}$/`），从 task-tree.json 恢复目标并续跑；与 `--goal` 互斥（resume 优先）。
+
+**验证**：
+- 单测 4 用例（`test/planner-resume.test.ts`）：skip done + failed 重跑 / running 降级 / 全 done 幂等（零 LLM 调用）/ loadTree 校验（不存在/损坏/非法 status）
+- 真实 API 两场景（会话 `1787826776919`）：① 全 done resume → `已完成 2/2` 幂等秒完成、原结果保留、零工具调用；② 手动改 t2→pending 模拟"t1 完成后进程被杀" → `已完成 1/2`，t1 跳过（无工具调用），t2 重跑且**自动继承 t1 前序产出**（基于 t1 note 直接总结，未重新读文件）
+- 全量测试 58/58，类型债 9（新增 0）
+
+**A 线六件套进度：① Task Decomposition ✅ → ② Compaction ✅ → ③ 断点续跑 ✅ → 剩 ④ re-plan / ⑤ 并行 / ⑥ C2**。
 
 ---
 
@@ -202,7 +216,7 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 | A0 | 靶子任务定稿 + run 基线录制（当前 agent 跑 T1 的失败/卡点录像） | 卡点清单 |
 | A1 | **Task Decomposition**（planner 层）+ 任务树落盘 | 能拆 + 能按序执行 |
 | A2 | **Compaction**（上下文预算 + 摘要替换） | ✅ **完成**（2026-08-27，50+ 轮不爆实测通过，§三） |
-| A3 | **断点续跑**（resume API + CLI flag） | 杀进程重启接着干 |
+| A3 | **断点续跑**（resume API + CLI flag） | ✅ **完成**（2026-08-27，`--resume <sid>` 实测两场景通过，§三） |
 | A4 | **re-plan 自检** + 并行工具 | 中途失败不自爆 |
 | A5 | **C2 自我更新**收口 | G8 实测通过 |
 
@@ -292,7 +306,7 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 | **S2** | ✅ **K1 修复**（maxTokens 8192 + 分段写纪律）→ ✅ **A1 planner 实现**（`core/planner.ts`，`--goal` 模式，三次实测 100% 完成率，新卡点 K5 已闭环，commit `2d0117b`） | B2 会话管理 API（agent 种子已就位，人类补齐 server 端） | **S1 OAuth 登录**（server 登录端点 + 前端按钮 + user_id 落盘） |
 | **S3** | ✅ **T1 二次实测**（暴露 K6 假阳性：5/5 标 done 实际 1/5，三根因已修复）→ A2 Compaction 顺延至 T1 重跑后 | B2 前端会话管理器 UI（T1 假 done，待重跑） | ✅ 教程已交付（docs/SUPABASE-SETUP.md）；✅ **俪宁已注册给 key（已验证有效）** |
 | **S4** | ✅ **T1 三次实测**（K6 验证通过：假 done 5/5→≤1/跑；第三跑产出保留：server 会话 API + sessions-client.ts + 类型债 13→7；新卡点 K7 四根因）→ **K7 修复**（verify 时序/语义 + 拆解锚定 console.html + Windows 提示） | B2 console.html 前端 UI 收口（T1 唯一缺口） | **S1 OAuth 联调**（俪宁 dashboard 配置中 → server 登录端点 + 前端按钮 + user_id 落盘） |
-| **S5** | ✅ **A2 Compaction 完成**（2026-08-27：compactor.ts + agent-loop 挂载，单测 6 用例 + 集成 31 轮压 93% + 真实 API 回归 3/3）→ **A3 断点续跑**（任务树落盘+resume）→ A4 re-plan | B3 index 退役 | S2 收尾 + S3 Realtime |
+| **S5** | ✅ **A2 Compaction 完成**（2026-08-27：compactor.ts + agent-loop 挂载，单测 6 用例 + 集成 31 轮压 93% + 真实 API 回归 3/3，commit `8b09704`）→ ✅ **A3 断点续跑完成**（2026-08-27：planner resumeTree + `--resume <sid>`，单测 4 用例 + 真实 API 两场景，测试 58/58）→ **A4 re-plan 自检** | B3 index 退役 | S2 收尾 + S3 Realtime |
 | **S5** | T1 三次实测（完成率 → 100% 冲刺）→ A5 C2 收口 | B5 美化（可选） | S3 多浏览器实测 |
 | **S6** | **G8 验收**：T1 全流程 0 插手完成 = 绿灯 | — | 全端打通验收 |
 | **S7（Phase C 起）** | 多 agent 协作：reviewer 只读配置 → 评审→修改闭环 → C2 交易 Agent | D0 profile 设计（与 S 线打通） | 云端身份 → 多用户 profile 映射 |
