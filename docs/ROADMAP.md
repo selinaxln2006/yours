@@ -189,7 +189,21 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 - 真实 API 两场景（会话 `1787826776919`）：① 全 done resume → `已完成 2/2` 幂等秒完成、原结果保留、零工具调用；② 手动改 t2→pending 模拟"t1 完成后进程被杀" → `已完成 1/2`，t1 跳过（无工具调用），t2 重跑且**自动继承 t1 前序产出**（基于 t1 note 直接总结，未重新读文件）
 - 全量测试 58/58，类型债 9（新增 0）
 
-**A 线六件套进度：① Task Decomposition ✅ → ② Compaction ✅ → ③ 断点续跑 ✅ → 剩 ④ re-plan / ⑤ 并行 / ⑥ C2**。
+### A4 re-plan 自愈完成（S5 尾，2026-08-27）
+
+**实现**：`planner.ts` 主循环重构 + 新增 `replan()`。
+- **run() 主循环化**：原"单轮 for + failed 继续跑后续"改为外层 `mainLoop`——每轮只执行**依赖全 done 的 pending**；依赖 failed 的任务**挂起**（不在坏地基上硬跑）；轮末有 failed 且未超上限 → replan → 下一轮。
+- **`Planner.replan(tree, ctx)`（public）**：构造 replan prompt（当前树全貌：✓ done 带产出 / ✗ failed 带失败原因 / ○ 挂起）→ LLM 增删改未完成部分（重写失败任务策略 / 删除死路 / 保留或调整挂起任务 / 新增前置任务）→ `mergeReplan` 合并（**done 任务原样保留**，产出不可丢；新任务 id 与 done 冲突自动重命名；deps 只允许指向新任务或 done 任务）→ 落盘 task-tree.json。
+- **防死循环双保险**：`maxReplans`（默认 2，`options` 可配，0 = 失败即止）+ **无效 replan 检测**（LLM 输出与未完成部分 desc/verify/deps 完全一致 → 判定白费，直接放弃）。
+- **语义调和**：A3 resume 时 failed 降级 pending **重试一次**（跨进程给机会）；**进程内失败走 replan**（LLM 智能决策）。aborted（外部中断）→ 标记 failed 后**终止整个 run**（replan 无意义）。
+- CLI 零改动（`--goal` / `--resume` 自动继承）。
+
+**验证（三层）**：
+- 单测 6 用例（`test/planner-replan.test.ts`）：失败→replan→全 done / replan 非法 JSON 停止 / 无效 replan 防死循环 / maxReplans=0 失败即止 / 依赖 failed 的挂起任务重构 / id 冲突重命名
+- 真实 API（`scripts/smoke-replan.ts`，会话 `1787828532572`）：手工构造 t2 失败树（写类工具失败）→ replan → LLM **读到失败原因**（"写入不存在的子目录失败"）后重写为 r1"**先确认 docs/ 目录存在，若不存在则创建**"、r2 校验 → done 保留、deps 链正确、落盘成功
+- 端到端：`--resume 1787828532572` 续跑 replan 后的树 → **3/3 子任务成功**（r1 真写 docs/replan-smoke.md 940 字节，r2 语义比对 ROADMAP A4 章节一致）→ 全量测试 59/59，类型债 9（新增 0）
+
+**A 线六件套进度：① Task Decomposition ✅ → ② Compaction ✅ → ③ 断点续跑 ✅ → ④ re-plan ✅ → 剩 ⑤ 并行 / ⑥ C2**。
 
 ---
 
@@ -217,7 +231,7 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 | A1 | **Task Decomposition**（planner 层）+ 任务树落盘 | 能拆 + 能按序执行 |
 | A2 | **Compaction**（上下文预算 + 摘要替换） | ✅ **完成**（2026-08-27，50+ 轮不爆实测通过，§三） |
 | A3 | **断点续跑**（resume API + CLI flag） | ✅ **完成**（2026-08-27，`--resume <sid>` 实测两场景通过，§三） |
-| A4 | **re-plan 自检** + 并行工具 | 中途失败不自爆 |
+| A4 | **re-plan 自检** + 并行工具 | ✅ **re-plan 完成**（2026-08-27，失败自愈三层验证通过，§三）；并行工具=⑤ 待做 |
 | A5 | **C2 自我更新**收口 | G8 实测通过 |
 
 > 注：A1-A5 是**按卡点自适应**的顺序草案，不是死计划。每个阶段做完立刻拿 T1 实测，实测决定下一步。
@@ -306,7 +320,7 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 | **S2** | ✅ **K1 修复**（maxTokens 8192 + 分段写纪律）→ ✅ **A1 planner 实现**（`core/planner.ts`，`--goal` 模式，三次实测 100% 完成率，新卡点 K5 已闭环，commit `2d0117b`） | B2 会话管理 API（agent 种子已就位，人类补齐 server 端） | **S1 OAuth 登录**（server 登录端点 + 前端按钮 + user_id 落盘） |
 | **S3** | ✅ **T1 二次实测**（暴露 K6 假阳性：5/5 标 done 实际 1/5，三根因已修复）→ A2 Compaction 顺延至 T1 重跑后 | B2 前端会话管理器 UI（T1 假 done，待重跑） | ✅ 教程已交付（docs/SUPABASE-SETUP.md）；✅ **俪宁已注册给 key（已验证有效）** |
 | **S4** | ✅ **T1 三次实测**（K6 验证通过：假 done 5/5→≤1/跑；第三跑产出保留：server 会话 API + sessions-client.ts + 类型债 13→7；新卡点 K7 四根因）→ **K7 修复**（verify 时序/语义 + 拆解锚定 console.html + Windows 提示） | B2 console.html 前端 UI 收口（T1 唯一缺口） | **S1 OAuth 联调**（俪宁 dashboard 配置中 → server 登录端点 + 前端按钮 + user_id 落盘） |
-| **S5** | ✅ **A2 Compaction 完成**（2026-08-27：compactor.ts + agent-loop 挂载，单测 6 用例 + 集成 31 轮压 93% + 真实 API 回归 3/3，commit `8b09704`）→ ✅ **A3 断点续跑完成**（2026-08-27：planner resumeTree + `--resume <sid>`，单测 4 用例 + 真实 API 两场景，测试 58/58）→ **A4 re-plan 自检** | B3 index 退役 | S2 收尾 + S3 Realtime |
+| **S5** | ✅ **A2 Compaction 完成**（2026-08-27：compactor.ts + agent-loop 挂载，单测 6 用例 + 集成 31 轮压 93% + 真实 API 回归 3/3，commit `8b09704`）→ ✅ **A3 断点续跑完成**（2026-08-27：planner resumeTree + `--resume <sid>`，单测 4 用例 + 真实 API 两场景，测试 58/58，commit `588158a`）→ ✅ **A4 re-plan 自愈完成**（2026-08-27：主循环化 + replan()，单测 6 用例 + 真实 API replan 冒烟 + 端到端 resume 3/3，测试 59/59）→ **⑤ 并行工具** | B3 index 退役 | S2 收尾 + S3 Realtime |
 | **S5** | T1 三次实测（完成率 → 100% 冲刺）→ A5 C2 收口 | B5 美化（可选） | S3 多浏览器实测 |
 | **S6** | **G8 验收**：T1 全流程 0 插手完成 = 绿灯 | — | 全端打通验收 |
 | **S7（Phase C 起）** | 多 agent 协作：reviewer 只读配置 → 评审→修改闭环 → C2 交易 Agent | D0 profile 设计（与 S 线打通） | 云端身份 → 多用户 profile 映射 |

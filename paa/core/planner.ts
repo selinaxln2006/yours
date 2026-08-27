@@ -42,6 +42,8 @@ export interface PlannerOptions {
   subtaskRounds?: number;
   /** 任务树生成调用 maxTokens，默认 2048 */
   planMaxTokens?: number;
+  /** 任务树生命周期内最多 re-plan 次数（默认 2；0 = 失败即止，不自动调整） */
+  maxReplans?: number;
 }
 
 export interface PlannerDeps {
@@ -171,6 +173,69 @@ function normalizeTree(goal: string, raw: unknown, maxTasks: number): TaskTree {
   return { goal, createdAt: Date.now(), updatedAt: Date.now(), tasks };
 }
 
+/** A4 re-plan 指令（追加在 base system prompt 之后，替代 planSystemPrompt） */
+function replanSystemPrompt(opts: Required<PlannerOptions>): string {
+  return `你是任务重规划器（Replanner）。之前的计划中某个子任务失败了，请基于失败原因调整后续计划，让整体目标能继续推进。
+
+输出要求：只输出一个 JSON 对象，不要任何多余文字、不要 markdown 代码块标记。
+
+JSON 格式：
+{"tasks":[{"id":"r1","desc":"子任务描述：具体做什么，涉及哪些文件/接口","verify":"完成标准：如何验证（可执行的检查）","deps":[]}]}
+
+约束：
+- 1~${opts.maxTasks} 个子任务，只输出"接下来要执行的子任务"；已完成子任务（标记 ✓ 的）绝不要出现在输出里——它们已结束，产出落盘可直接引用
+- 失败子任务（标记 ✗）：要么重写 desc/verify（给出与上次不同的执行策略，吸取失败原因，避免重蹈覆辙），要么删除（确认此路不通）
+- 未开始子任务（标记 ○）：依赖不受影响就保留原样，否则调整或删除
+- 可以新增子任务（如"先补充前置 X 再继续 Y"）
+- deps 只能引用：本输出内的任务 id，或上面给出的已完成子任务 id（✓ 的）
+- 【K7-③ 拆解锚定】目标包含前端/UI 需求时，必须有子任务明确写『修改 console.html』；禁止用 CLI 脚本替代前端 UI 的实现
+- 【K8 可执行 verify】verify 必须是 agent 自己能执行的检查（fs_grep 搜引用 / node --check / HTTP 请求 / 跑脚本）；禁止写"浏览器打开能看到/人工确认"这类需要人类在场或没有工具可执行的验证方式`;
+}
+
+/** 合并 replan 输出到任务树：保留 done 任务原样，未完成部分替换为 LLM 新规划
+ *  返回 null = 输出非法 / 与现状完全一致（无效 replan，防死循环） */
+function mergeReplan(tree: TaskTree, raw: unknown, maxTasks: number): TaskTree | null {
+  const obj = raw as { tasks?: unknown };
+  if (!obj || !Array.isArray(obj.tasks) || obj.tasks.length === 0) return null;
+  const doneIds = new Set(tree.tasks.filter((t) => t.status === 'done').map((t) => t.id));
+  // 新任务 id 冲突重命名（done 任务 id 不可复用；新任务内部重复也重命名）
+  let r = 1;
+  const seen = new Set<string>();
+  const rename = (id: string): string => {
+    let out = doneIds.has(id) || seen.has(id) ? `r${r}` : id;
+    while (doneIds.has(out) || seen.has(out)) out = `r${r++}`;
+    seen.add(out);
+    return out;
+  };
+  const newTasks: TaskNode[] = obj.tasks
+    .slice(0, maxTasks)
+    .map((t, i): TaskNode => {
+      const node = t as Partial<TaskNode>;
+      const id = rename(String(node.id ?? `r${i + 1}`));
+      return {
+        id,
+        desc: String(node.desc ?? '').slice(0, 300),
+        verify: String(node.verify ?? '').slice(0, 300),
+        deps: Array.isArray(node.deps) ? node.deps.map((d) => String(d)) : [],
+        status: 'pending',
+      };
+    })
+    .filter((t) => t.desc);
+  if (newTasks.length === 0) return null;
+  const newIds = new Set(newTasks.map((t) => t.id));
+  // deps 只允许指向新任务或已 done 任务（引用被删任务的依赖安全过滤掉）
+  for (const t of newTasks) t.deps = t.deps.filter((d) => (newIds.has(d) || doneIds.has(d)) && d !== t.id);
+  // 无效 replan 检测：新任务与当前未完成部分完全一致（desc/verify/deps 全等）→ 白费，防死循环
+  const sig = (ts: TaskNode[]): string =>
+    [...ts]
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((t) => `${t.desc}|${t.verify}|${[...t.deps].sort().join(',')}`)
+      .join('\n');
+  const unfinished = tree.tasks.filter((t) => t.status !== 'done');
+  if (unfinished.length === newTasks.length && sig(unfinished) === sig(newTasks)) return null;
+  return { ...tree, updatedAt: Date.now(), tasks: [...tree.tasks.filter((t) => t.status === 'done'), ...newTasks] };
+}
+
 /** Kahn 拓扑排序（环/缺失依赖已由 normalize 消除） */
 function topoSort(tasks: TaskNode[]): TaskNode[] {
   const byId = new Map(tasks.map((t) => [t.id, t]));
@@ -206,6 +271,7 @@ export class Planner {
       maxTasks: deps.options?.maxTasks ?? 6,
       subtaskRounds: deps.options?.subtaskRounds ?? 8,
       planMaxTokens: deps.options?.planMaxTokens ?? 2048,
+      maxReplans: deps.options?.maxReplans ?? 2,
     };
   }
 
@@ -263,11 +329,12 @@ export class Planner {
   async run(goal: string, ctx: AgentLoopCtx, resumeTree?: TaskTree | null): Promise<PlannerResult> {
     const tree = resumeTree ?? (await this.plan(goal, ctx));
 
-    // 【A3 续跑语义】running = 进程死前未完成 → 降级 pending 重跑；先落盘再进入执行
+    // 【A3 续跑语义】running = 进程死前未完成 → 降级 pending 重跑；
+    //  failed = 上次进程失败 → 降级 pending 重试一次（跨进程给一次机会；进程内失败走 A4 replan）
     if (resumeTree) {
       let dirty = false;
       for (const t of tree.tasks) {
-        if (t.status === 'running') {
+        if (t.status === 'running' || t.status === 'failed') {
           t.status = 'pending';
           dirty = true;
         }
@@ -275,25 +342,41 @@ export class Planner {
       if (dirty) await this.saveTree(tree, ctx);
     }
 
-    const order = topoSort(tree.tasks);
     const outcomes: Record<string, TaskOutcome> = {};
     // 续跑：已完成子任务计入 doneCount（避免重复计数）
     let doneCount = tree.tasks.filter((t) => t.status === 'done').length;
+    let replanCount = 0;
 
-    subtaskLoop: for (const task of order) {
-      // 【A3 断点续跑】跳过已完成子任务：保留原结果与产出 note（供后续子任务引用）
-      if (task.status === 'done') {
-        outcomes[task.id] = {
-          status: 'done',
-          rounds: task.rounds ?? 0,
-          toolCalls: task.toolCalls ?? 0,
-          note: task.note,
-        };
-        continue;
-      }
+    // 【A4 re-plan 自愈】主循环：每轮执行"依赖全 done 的 pending"；
+    // 轮末有 failed 且未超 replan 上限 → LLM 重规划未完成部分（增删改）→ 下一轮继续
+    mainLoop: for (;;) {
+      const order = topoSort(tree.tasks);
 
-      task.status = 'running';
-      await this.saveTree(tree, ctx);
+      for (const task of order) {
+        // 【A3 断点续跑】跳过已完成子任务：保留原结果与产出 note（供后续子任务引用）
+        if (task.status === 'done') {
+          if (!outcomes[task.id]) {
+            outcomes[task.id] = {
+              status: 'done',
+              rounds: task.rounds ?? 0,
+              toolCalls: task.toolCalls ?? 0,
+              note: task.note,
+            };
+          }
+          continue;
+        }
+        // 失败任务：本轮不执行，留给轮末 replan 决策（增删改）
+        if (task.status === 'failed') continue;
+        if (task.status !== 'pending') continue;
+        // 依赖链检查：任一依赖未 done（failed/挂起）→ 本轮挂起，交给 replan
+        const depAllDone = task.deps.every((d) => {
+          const dep = tree.tasks.find((t) => t.id === d);
+          return dep?.status === 'done';
+        });
+        if (!depAllDone) continue;
+
+        task.status = 'running';
+        await this.saveTree(tree, ctx);
 
       const subLoop = new AgentLoop({
         adapter: this.deps.adapter,
@@ -322,7 +405,7 @@ export class Planner {
           task.note = msg.slice(0, 200);
           outcomes[task.id] = { status: 'failed', rounds: 0, toolCalls: 0, note: task.note };
           await this.saveTree(tree, ctx);
-          continue subtaskLoop;
+          continue;
         }
       }
 
@@ -408,6 +491,9 @@ export class Planner {
         task.status = 'failed';
         task.note = `${why} | ${note}`.slice(0, 300);
         outcomes[task.id] = { status: 'failed', rounds: res.rounds, toolCalls: res.toolCalls, note: task.note };
+        await this.saveTree(tree, ctx);
+        // aborted = 外部中断（用户/宿主叫停）→ replan 无意义，终止整个 run
+        if (res.aborted) break mainLoop;
       } else {
         task.status = 'done';
         const verifyWarn =
@@ -419,17 +505,74 @@ export class Planner {
         task.note = (verifyWarn + note).slice(0, 300);
         outcomes[task.id] = { status: 'done', rounds: res.rounds, toolCalls: res.toolCalls, note: task.note };
         doneCount++;
+        await this.saveTree(tree, ctx);
       }
-      await this.saveTree(tree, ctx);
     }
 
+    // 轮末自愈判定：无 failed / 无 pending → 收敛；超上限或 replan 无效 → 放弃（failed 保留）
+    const failedTasks = tree.tasks.filter((t) => t.status === 'failed');
+    const hasPending = tree.tasks.some((t) => t.status === 'pending');
+    if (failedTasks.length === 0 || !hasPending) break;
+    if (replanCount >= this.opts.maxReplans) break;
+    const replanOk = await this.replan(tree, ctx);
+    if (!replanOk) break;
+    replanCount++;
+  }
+
     const summary = [
-      `✅ 目标执行完成：${doneCount}/${order.length} 个子任务成功${resumeTree ? '（🔄 断点续跑）' : ''}`,
-      ...order.map(
+      `✅ 目标执行完成：${doneCount}/${tree.tasks.length} 个子任务成功${resumeTree ? '（🔄 断点续跑）' : ''}${replanCount > 0 ? `（re-plan ${replanCount} 次自愈）` : ''}`,
+      ...tree.tasks.map(
         (t) => `- ${t.id} [${t.status}] ${t.desc}${t.note ? ` — ${t.note}` : ''}`,
       ),
     ].join('\n');
 
-    return { tree, outcomes, doneCount, totalCount: order.length, summary };
+    return { tree, outcomes, doneCount, totalCount: tree.tasks.length, summary };
+  }
+
+  /** A4 失败自愈：LLM 读失败原因 → 增删改未完成任务树 → 落盘 → 返回是否有效
+   *  （false = 输出非法 / 与现状一致 / 瞬断重试后仍失败，调用方应停止 replan） */
+  async replan(tree: TaskTree, ctx: AgentLoopCtx): Promise<boolean> {
+    const failed = tree.tasks.filter((t) => t.status === 'failed');
+    if (failed.length === 0) return false;
+    const lines = tree.tasks.map((t) => {
+      const mark = t.status === 'done' ? '✓' : t.status === 'failed' ? '✗' : '○';
+      const extra =
+        t.status === 'failed' && t.note
+          ? ` — 失败原因：${t.note}`
+          : t.status === 'done' && t.note
+            ? ` — ${t.note}`
+            : '';
+      return `${mark} ${t.id} ${t.desc}${extra}`;
+    });
+    const messages: ChatMessage[] = [
+      { role: 'system', content: this.deps.baseSystemPrompt + '\n\n' + replanSystemPrompt(this.opts) },
+      {
+        role: 'user',
+        content: ['【重新规划】以下子任务失败，请调整剩余计划：', '', tree.goal, '', lines.join('\n')].join('\n'),
+      },
+    ];
+    let raw: unknown;
+    for (let attempts = 0; ; attempts++) {
+      try {
+        const res = await this.deps.adapter.chat(messages, {
+          maxTokens: this.opts.planMaxTokens,
+          temperature: 0.2,
+        });
+        raw = parseJsonLoose(res.content ?? '');
+        break;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        const transient = /terminated|fetch failed|ECONNRESET|socket|timed ?out|timeout/i.test(msg);
+        if (attempts < 2 && transient) continue;
+        return false;
+      }
+    }
+    const merged = mergeReplan(tree, raw, this.opts.maxTasks);
+    if (!merged) return false;
+    // 就地替换（外部引用同一对象；断点状态文件同步更新）
+    tree.tasks = merged.tasks;
+    tree.updatedAt = merged.updatedAt;
+    await this.saveTree(tree, ctx);
+    return true;
   }
 }
