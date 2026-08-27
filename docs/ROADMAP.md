@@ -59,7 +59,7 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 | ③ | 断点续跑 | planner 产物落盘 `runs/<sid>/task-tree.json` + `resume(sid)` API | 任务树含每个子任务状态（pending/running/done/failed）→ 恢复 = 加载树 → 跳过 done → 从 pending 续跑；messages 由 events.jsonl 回放重建。CLI 加 `--resume <sid>` |
 | ④ | re-plan 自检 | planner 内钩子 + 新增 replan 轮 | 子任务失败判定（toolFail/toolCalls > 30% 或无产出/验证失败）→ 触发 replan：LLM 读失败原因 → 增删改剩余任务树 → 更新 task-tree.json → 继续 |
 | ⑤ | 并行工具 | `agent-loop.ts` 工具执行段（现顺序 for）改 | 同轮多个 toolCalls 隐含 no-dep → 非 ask 类 `Promise.all` 并行（ask 类串行防并发弹框）；planner `subtaskConcurrency`（默认 1，`--concurrency N`）；结果按 call.id 顺序注入，审计不变。✅ **完成**（2026-08-27，§三 A4.5） |
-| ⑥ | C2 自我更新 | `pkg-loader.ts` 热加载（已支持 loadAll 容错）+ 循环内一等动作 | planner 阶段检测"缺工具" → agent 用 fs__write 写新工具文件（按 pkg 规范）→ pkg-loader 热挂载 → 注册表更新 → 继续执行。权限纪律：写工具走用户确认（FORBID-less），沿用 v1 设计 |
+| ⑥ | C2 自我更新 | `pkg-loader.ts` 热加载（已支持 loadAll 容错）+ 循环内一等动作 | planner 阶段检测"缺工具" → agent 用 fs__write 写新工具文件（按 pkg 规范）→ pkg-loader 热挂载 → 注册表更新 → 继续执行。权限纪律：写工具走用户确认（FORBID-less），沿用 v1 设计。✅ **完成**（2026-08-27，§三 A4.6） |
 
 **关键洞察**：六件套不全是"新造"，① 是核心引擎（planner 调度层），③ 的地基（JSONL 事件溯源）已存在，⑤ 是局部重构，② ④ ⑥ 是挂在 ① 上的钩子。**做 ① 就能同时激活 ③ ④ 的骨架**。
 
@@ -203,7 +203,7 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 - 真实 API（`scripts/smoke-replan.ts`，会话 `1787828532572`）：手工构造 t2 失败树（写类工具失败）→ replan → LLM **读到失败原因**（"写入不存在的子目录失败"）后重写为 r1"**先确认 docs/ 目录存在，若不存在则创建**"、r2 校验 → done 保留、deps 链正确、落盘成功
 - 端到端：`--resume 1787828532572` 续跑 replan 后的树 → **3/3 子任务成功**（r1 真写 docs/replan-smoke.md 940 字节，r2 语义比对 ROADMAP A4 章节一致）→ 全量测试 59/59，类型债 9（新增 0）
 
-**A 线六件套进度：① Task Decomposition ✅ → ② Compaction ✅ → ③ 断点续跑 ✅ → ④ re-plan ✅ → ⑤ 并行 ✅ → 剩 ⑥ C2**。
+**A 线六件套进度：① Task Decomposition ✅ → ② Compaction ✅ → ③ 断点续跑 ✅ → ④ re-plan ✅ → ⑤ 并行 ✅ → ⑥ C2 ✅（A 线六件套全绿，2026-08-27）**。
 
 ### A4.5 ⑤ 并行工具（2026-08-27 完成）
 
@@ -218,6 +218,33 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 - 单测 6 用例：`test/agent-loop-parallel.test.ts`（同轮 3 调用并行 + 最大并发 ≥2 / ask 类串行 max=1 / deny 并行拒绝 + 结果按 call.id 顺序注入）+ `test/planner-parallel.test.ts`（concurrency=2 独立任务并行且依赖任务等待 / 默认 1 严格顺序 / 链式依赖在 concurrency=3 下不越级）→ 全量 **61/61**，类型债 9（新增 0）
 - 真实 API（`scripts/smoke-parallel.ts`）：冒烟1 引导同轮多调用 → **2 轮完成 4 次工具调用**（3 grep + 1 read 并行，回答正常汇总）；冒烟2 planner concurrency=2 → **4/4 子任务成功**（t1/t2 事件交错输出证明真并行）
 - 依赖链在并发下不被破坏（t3 等 t1/t2 都完成才启动）
+
+### A4.6 ⑥ C2 现场造工具（2026-08-27 完成，commit `683f76e`）—— A 线六件套全绿 🎉
+
+**目标**：长任务中 agent 发现自己缺工具 → 现场写 ToolPkg → 热挂载 → 继续执行。这是六件套最后一件。
+
+**实现**（机制底座 G5 已就位，本次补齐"循环内一等动作"）：
+- **core-tools**：`fs_write`/`fs_append` ENOENT 时给一键指引（"父目录不存在，fs 工具无 mkdir，请先用 shell_run 建目录：New-Item -ItemType Directory -Force '...'"）——C2 造包时建目录是常见首错
+- **planner prompt 两条纪律**：① 拆解纪律——目标需要专用计算/解析/转换能力时，拆"造包子任务"（写文件 + 安装 + pkg_list 确认）；② 一等动作手册——建目录 → fs_write manifest+impl → pkg_install → pkg_list 确认，附 manifest/impl 最小模板 + 约束（一次最多 2 包、impl ≤50 行、造完必须用）
+- **可重复跑**：smoke-c2.ts 开头清理上一轮装进 pkgs/ 的 mycalc
+
+**验证（三层）**：
+- 单测 3 用例（`test/planner-c2.test.ts`，无 LLM）：现场造包闭环（写包→pkg_install→新工具立即可用→已拷入 pkgs/）/ 坏包反馈（impl 语法错→安装失败回滚→修复重装）/ 同名冲突（重复安装明确报错）
+- 真实 API 冒烟（`scripts/smoke-c2.ts`，会话 `1787829578226`）：**4/4 全 done**——agent 自主 shell 建目录 → fs_write manifest+impl → pkg_install → pkg_list 确认 → 调 `mycalc_add` 算 123+456=579 → fs_write 落盘 artifacts/c2-result.txt → fs_read 验证
+- 全量测试 **70/70**（63 基线 + 3 C2 + 7 sync），类型债 12（新增 0）
+
+**A 线六件套至此全部完成**。下一步：G8 验收（T1 全流程 0 插手）与 C 线（多 agent 协作 / 交易 Agent）。
+
+### S2 云同步代码侧完成（2026-08-27，commit `6f52461`）
+
+**实现**：
+- `core/sync.ts`：SyncEngine——18 键增量同步（每键 rev 单调递增 + dirty 标记）+ 会话事件游标（append-only 天然无冲突）+ LWW 冲突裁决（时间戳比大小，不做文档级 diff）；传输层抽象 `SyncTransport`（测试内存 mock / 生产 Supabase REST 可替换）
+- `server/sync-rest.ts`：Supabase REST 传输层（life_sync + session_events 两表，RLS 按 auth.uid() 隔离，upsert 用 merge-duplicates）
+- `server/main.ts` 集成：`ensureSync`（登录即启用引擎，token 续期自动重建）+ lifeStore change 钩子（source≠sync → markDirty）+ `POST /api/sync`（手动同步）+ logout 停用 + health/me 附 sync 状态；未登录 /api/sync → 401
+- `docs/SUPABASE-SETUP.md` Step 5：一次性建表 SQL（life_sync + session_events + RLS）
+- 单测 7 用例（sync.test.ts）：首拉/push/LWW 云端胜/本地胜/事件游标/幂等/错误路径
+
+**验证**：单测 7/7 + 全量 70/70 + server 重启后 health 带 sync 字段 + /api/sync 未登录 401。**剩余两件需俪宁操作**：① Supabase Dashboard SQL Editor 跑建表 SQL ② 浏览器登录 GitHub OAuth → 自动首次同步。表探测脚本 `scripts/probe-supabase.mjs` 可随时复验。
 
 ---
 
@@ -246,7 +273,7 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 | A2 | **Compaction**（上下文预算 + 摘要替换） | ✅ **完成**（2026-08-27，50+ 轮不爆实测通过，§三） |
 | A3 | **断点续跑**（resume API + CLI flag） | ✅ **完成**（2026-08-27，`--resume <sid>` 实测两场景通过，§三） |
 | A4 | **re-plan 自检** + 并行工具 | ✅ **完成**（2026-08-27，re-plan 失败自愈三层验证通过 + ⑤ 并行工具：同轮多调用 Promise.all + 子任务并发 N，§三 A4.5） |
-| A5 | **C2 自我更新**收口 | G8 实测通过 |
+| A5 | **C2 自我更新** | ✅ **完成**（2026-08-27，commit `683f76e`，六件套全绿）→ **G8 验收**（T1 全流程 0 插手） |
 
 > 注：A1-A5 是**按卡点自适应**的顺序草案，不是死计划。每个阶段做完立刻拿 T1 实测，实测决定下一步。
 
@@ -316,7 +343,7 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 | 阶段 | 内容 | 工作量 |
 |------|------|--------|
 | S1 | Supabase 项目 + Auth OAuth 配置 + server 登录端点（`/api/auth/login|callback|me`）+ 前端登录按钮 + user_id 落盘 | 2-3 天 |
-| S2 | 18 键增量同步（rev + 拉取/推送/合并）+ 会话事件游标同步 + 冲突 LWW | ~1 周 |
+| S2 | 18 键增量同步（rev + 拉取/推送/合并）+ 会话事件游标同步 + 冲突 LWW | ✅ **代码侧完成**（2026-08-27，commit `6f52461`）——剩俪宁建表 + 登录验证 |
 | S3 | Realtime 跨端推送（云端变更 → 本地 WS 广播）+ 离线补同步 + 多浏览器实测 | ~1 周 |
 | S4 | （可选）移动端访问 / 密码登录 / 多账号切换 | 按需 |
 
@@ -334,7 +361,7 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 | **S2** | ✅ **K1 修复**（maxTokens 8192 + 分段写纪律）→ ✅ **A1 planner 实现**（`core/planner.ts`，`--goal` 模式，三次实测 100% 完成率，新卡点 K5 已闭环，commit `2d0117b`） | B2 会话管理 API（agent 种子已就位，人类补齐 server 端） | **S1 OAuth 登录**（server 登录端点 + 前端按钮 + user_id 落盘） |
 | **S3** | ✅ **T1 二次实测**（暴露 K6 假阳性：5/5 标 done 实际 1/5，三根因已修复）→ A2 Compaction 顺延至 T1 重跑后 | B2 前端会话管理器 UI（T1 假 done，待重跑） | ✅ 教程已交付（docs/SUPABASE-SETUP.md）；✅ **俪宁已注册给 key（已验证有效）** |
 | **S4** | ✅ **T1 三次实测**（K6 验证通过：假 done 5/5→≤1/跑；第三跑产出保留：server 会话 API + sessions-client.ts + 类型债 13→7；新卡点 K7 四根因）→ **K7 修复**（verify 时序/语义 + 拆解锚定 console.html + Windows 提示） | B2 console.html 前端 UI 收口（T1 唯一缺口） | **S1 OAuth 联调**（俪宁 dashboard 配置中 → server 登录端点 + 前端按钮 + user_id 落盘） |
-| **S5** | ✅ **A2 Compaction 完成**（2026-08-27：compactor.ts + agent-loop 挂载，单测 6 用例 + 集成 31 轮压 93% + 真实 API 回归 3/3，commit `8b09704`）→ ✅ **A3 断点续跑完成**（2026-08-27：planner resumeTree + `--resume <sid>`，单测 4 用例 + 真实 API 两场景，测试 58/58，commit `588158a`）→ ✅ **A4 re-plan 自愈完成**（2026-08-27：主循环化 + replan()，单测 6 用例 + 真实 API replan 冒烟 + 端到端 resume 3/3，测试 59/59，commit `4936fe9`）→ ✅ **⑤ 并行工具完成**（2026-08-27：同轮多工具 Promise.all + 子任务并发 `--concurrency N`，单测 6 用例 + 真实 API 两段冒烟，测试 61/61）→ **⑥ C2 自我更新** | B3 index 退役 | S2 收尾 + S3 Realtime |
+| **S5** | ✅ **A2 Compaction 完成**（2026-08-27：compactor.ts + agent-loop 挂载，单测 6 用例 + 集成 31 轮压 93% + 真实 API 回归 3/3，commit `8b09704`）→ ✅ **A3 断点续跑完成**（2026-08-27：planner resumeTree + `--resume <sid>`，单测 4 用例 + 真实 API 两场景，测试 58/58，commit `588158a`）→ ✅ **A4 re-plan 自愈完成**（2026-08-27：主循环化 + replan()，单测 6 用例 + 真实 API replan 冒烟 + 端到端 resume 3/3，测试 59/59，commit `4936fe9`）→ ✅ **⑤ 并行工具完成**（2026-08-27：同轮多工具 Promise.all + 子任务并发 `--concurrency N`，单测 6 用例 + 真实 API 两段冒烟，测试 61/61）→ ✅ **⑥ C2 现场造工具完成**（2026-08-27：fs ENOENT 指引 + planner 造包纪律 + 热挂载闭环，单测 3 + 真实冒烟 4/4，**六件套全绿**，测试 70/70，commit `683f76e`）→ **G8 验收（T1 全流程 0 插手）** | B3 index 退役 | ✅ **S2 代码侧完成**（commit `6f52461`，待俪宁建表 + 登录验证）→ S3 Realtime |
 | **S5** | T1 三次实测（完成率 → 100% 冲刺）→ A5 C2 收口 | B5 美化（可选） | S3 多浏览器实测 |
 | **S6** | **G8 验收**：T1 全流程 0 插手完成 = 绿灯 | — | 全端打通验收 |
 | **S7（Phase C 起）** | 多 agent 协作：reviewer 只读配置 → 评审→修改闭环 → C2 交易 Agent | D0 profile 设计（与 S 线打通） | 云端身份 → 多用户 profile 映射 |
