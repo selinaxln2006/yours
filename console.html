@@ -554,6 +554,29 @@ function renderStream(){
   for (const m of S.msgs) box.appendChild(m.kind==='tool' ? buildToolCard(m) : buildMsg(m));
   $('#clearBtn').style.display = S.msgs.length ? '' : 'none';
 }
+/* ---------- v1.2 打字机泵：网络 delta 成批涌到 → 按帧平滑逐字放出 ----------
+   自适应步长：积压 ≤8 字符时逐字；积压越多每帧吐得越多（ceil(remain/8)），
+   最多 8 帧（~130ms）追平网络，视觉上始终平滑且永不落后。 */
+function twKick(){ if (!S._twOn){ S._twOn = true; requestAnimationFrame(twPump); } }
+function twPump(){
+  let anim = false;
+  const box = $('#stream');
+  for (let i = 0; i < S.msgs.length; i++){
+    const m = S.msgs[i];
+    if (m.kind !== 'assistant' || !m.streaming) continue;
+    if (m.shown === undefined) m.shown = m.text.length;
+    if (m.shown > m.text.length) m.shown = m.text.length;
+    if (m.shown < m.text.length){
+      anim = true;
+      m.shown += Math.max(1, Math.ceil((m.text.length - m.shown) / 8));
+      const node = box.children[i];
+      const body = node && node.querySelector('.body');
+      if (body) body.textContent = m.text.slice(0, m.shown) + '▋';
+    }
+  }
+  if (anim){ autoScroll(); requestAnimationFrame(twPump); }
+  else S._twOn = false;
+}
 function pushMsg(m){ S.msgs.push(m); renderStream(); autoScroll(); }
 function autoScroll(){
   const box = $('#stream');
@@ -575,7 +598,10 @@ function buildMsg(m){
   }
   const body = document.createElement('div'); body.className='body';
   if (m.kind==='assistant'){
-    if (m.streaming) body.textContent = (m.text || '') + (m.text ? '▋' : '…');
+    if (m.streaming){
+      const disp = m.text.slice(0, m.shown ?? m.text.length);
+      body.textContent = disp + (disp ? '▋' : '…');
+    }
     else body.appendChild(mdToDom(m.text || ''));
   }
   else body.textContent = m.text || '';
@@ -793,10 +819,10 @@ function handleSse(evtRaw, card){
       break;
     case 'delta': {
       card.text += j.text || '';
-      // 检测并剥离首行 [MODE:xxx]
+      // 检测并剥离首行 [MODE:xxx]（同步回调已展示的字符数）
       const m = /^\s*\[MODE:(plan-execute|single|sequential|text)\]\s*/.exec(card.text);
-      if (m){ card.mode = m[1]; card.text = card.text.slice(m[0].length); }
-      renderStream(); autoScroll();
+      if (m){ card.mode = m[1]; card.text = card.text.slice(m[0].length); card.shown = Math.max(0, (card.shown || 0) - m[0].length); }
+      twKick();
       break;
     }
     case 'event':
@@ -828,7 +854,7 @@ async function send(){
   S.busy = true; renderComposer();
   const rid = ++S.runSeq;
   pushMsg({kind:'user', text, ts: Date.now()});
-  const card = {kind:'assistant', text:'', mode:null, streaming:true, runId:rid, ts:Date.now()};
+  const card = {kind:'assistant', text:'', mode:null, streaming:true, runId:rid, shown:0, ts:Date.now()};
   S.msgs.push(card); renderStream(); autoScroll();
   try{
     const r = await fetch('/api/chat/stream', {
