@@ -118,6 +118,24 @@ create policy "session_events own" on public.session_events
 
 ---
 
+## Step 6 — 配置回调地址 Redirect URL（必须做，否则登录跳不回来）
+
+> S1 的 GitHub 登录成功后，Supabase 要把浏览器跳回本地 server 的 `/api/auth/callback`。**这个地址不在白名单里的话，GitHub 授权完成后会报错或卡住**——本地永远收不到回调。
+
+1. 左侧边栏点 **⚙️ Project Settings** → **Authentication** → **URL Configuration**（或 **Authentication → URL Configuration**）
+2. 找到 **Redirect URLs** 一栏，点 **Add redirect URL**，逐条加（写死匹配，不要通配）：
+
+```
+http://127.0.0.1:8765/api/auth/callback
+http://localhost:8765/api/auth/callback
+```
+
+3. 确认 **Site URL** 填 `http://127.0.0.1:8765`（或 `http://localhost:8765`），点 **Save**
+
+> ⚠️ 换端口（server 跑在别的 port）时，这里必须同步加一条新地址，否则登录又跳不回来。
+
+---
+
 ## 安全提醒（重要）
 
 | ⚠️ | 说明 |

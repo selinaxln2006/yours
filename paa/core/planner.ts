@@ -36,9 +36,9 @@ export interface TaskTree {
 }
 
 export interface PlannerOptions {
-  /** 子任务数量上限，默认 6 */
+  /** 子任务数量上限，默认 8（G8 实测后从 6 调大，多文档类任务需要更多子任务） */
   maxTasks?: number;
-  /** 每个子任务独立 maxRounds，默认 8 */
+  /** 每个子任务独立 maxRounds，默认 16（G8 实测后从 8 调大：多文档逐个重构 10 轮会耗尽） */
   subtaskRounds?: number;
   /** 任务树生成调用 maxTokens，默认 2048 */
   planMaxTokens?: number;
@@ -282,8 +282,8 @@ export class Planner {
   constructor(deps: PlannerDeps) {
     this.deps = deps;
     this.opts = {
-      maxTasks: deps.options?.maxTasks ?? 6,
-      subtaskRounds: deps.options?.subtaskRounds ?? 8,
+      maxTasks: deps.options?.maxTasks ?? 8,
+      subtaskRounds: deps.options?.subtaskRounds ?? 16,
       planMaxTokens: deps.options?.planMaxTokens ?? 2048,
       maxReplans: deps.options?.maxReplans ?? 2,
       subtaskConcurrency: deps.options?.subtaskConcurrency ?? 1,

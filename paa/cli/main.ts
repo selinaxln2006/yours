@@ -151,6 +151,7 @@ function parseArgs(argv: string[]): {
   exportMemory: string | null;
   importMemory: string | null;
   concurrency: number;
+  subtaskRounds: number;
 } {
   let root = WORKSPACE_ROOT;
   let level: AutonomyLevel = 2;
@@ -162,6 +163,7 @@ function parseArgs(argv: string[]): {
   let exportMemory: string | null = null;
   let importMemory: string | null = null;
   let concurrency = 1;
+  let subtaskRounds = 24;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--root' && argv[i + 1]) root = path.resolve(argv[++i]);
     if (argv[i] === '--level') {
@@ -177,12 +179,17 @@ function parseArgs(argv: string[]): {
       if (!Number.isNaN(n) && n >= 1 && n <= 6) concurrency = Math.floor(n);
       i++;
     }
+    if (argv[i] === '--subtask-rounds') {
+      const n = Number(argv[i + 1]);
+      if (!Number.isNaN(n) && n >= 4 && n <= 60) subtaskRounds = Math.floor(n);
+      i++;
+    }
     if (argv[i] === '--yes') yes = true;
     if (argv[i] === '--agent' && argv[i + 1]) agent = argv[++i];
     if (argv[i] === '--export-memory' && argv[i + 1]) exportMemory = path.resolve(argv[++i]);
     if (argv[i] === '--import-memory' && argv[i + 1]) importMemory = path.resolve(argv[++i]);
   }
-  return { root, level, once, goal, resume, yes, agent, exportMemory, importMemory, concurrency };
+  return { root, level, once, goal, resume, yes, agent, exportMemory, importMemory, concurrency, subtaskRounds };
 }
 
 /** agent 角色配置（paa/agents/*.json）：工具白名单 + 人格 prompt + 默认 Autonomy */
@@ -209,7 +216,7 @@ async function loadAgent(name: string): Promise<AgentConfig | null> {
 }
 
 async function main(): Promise<void> {
-  const { root, level, once, goal, resume, yes, agent: agentName, exportMemory, importMemory, concurrency } = parseArgs(process.argv.slice(2));
+  const { root, level, once, goal, resume, yes, agent: agentName, exportMemory, importMemory, concurrency, subtaskRounds } = parseArgs(process.argv.slice(2));
 
   // --agent <name>：角色配置（工具白名单 + 人格 prompt + 默认 Autonomy）
   const agentCfg = agentName ? await loadAgent(agentName) : null;
@@ -371,8 +378,8 @@ async function main(): Promise<void> {
 
   // goal 模式（A1 planner）：模糊大目标 → 任务树 → 子任务队列自动执行
   // resume 模式（A3 planner）：--resume <sid> 从已落盘任务树断点续跑
-  // 用法：node cli/main.ts --goal "给 console 加多会话功能" [--level N] [--root <dir>] [--concurrency N]
-  //      node cli/main.ts --resume 1785432100000 [--level N] [--root <dir>] [--concurrency N]
+  // 用法：node cli/main.ts --goal "给 console 加多会话功能" [--level N] [--root <dir>] [--concurrency N] [--subtask-rounds N]
+  //      node cli/main.ts --resume 1785432100000 [--level N] [--root <dir>] [--concurrency N] [--subtask-rounds N]
   if (goal !== null || resume !== null) {
     const planner = new Planner({
       adapter,
@@ -380,7 +387,7 @@ async function main(): Promise<void> {
       session,
       baseSystemPrompt: baseSystem,
       memoryProvider: memory,
-      options: { maxTasks: 6, subtaskRounds: 10, subtaskConcurrency: concurrency },
+      options: { maxTasks: 10, subtaskRounds, subtaskConcurrency: concurrency },
       onEvent: (taskId, ev) => {
         if (ev.type === 'tool') {
           const p = ev.payload as { name: string; arguments: Record<string, unknown>; result: { ok: boolean; data?: unknown; error?: string } };

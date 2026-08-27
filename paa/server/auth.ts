@@ -114,7 +114,8 @@ export class SupabaseAuth {
     const res = await fetch(`${this.opts.projectUrl}/auth/v1/token?grant_type=authorization_code`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', apikey: this.opts.publishableKey },
-      body: JSON.stringify({ code, code_verifier: p.verifier, redirect_to: this.opts.callbackUrl }),
+      // 注意：Supabase PKCE 换 token 的字段名是 auth_code（不是 code）——用 code 会 400 invalid_request
+      body: JSON.stringify({ auth_code: code, code_verifier: p.verifier }),
     });
     const data = (await res.json().catch(() => ({}))) as SupabaseTokenResponse;
     if (!res.ok || !data.access_token) {

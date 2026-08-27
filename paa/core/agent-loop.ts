@@ -27,7 +27,7 @@ export interface AgentLoopDeps {
   systemPrompt: string;
   /** P1 接入记忆系统；P0 为 null */
   memoryProvider?: MemoryProvider | null;
-  /** 每轮 LLM 往返上限，默认 12 */
+  /** 每轮 LLM 往返上限，默认 16（G8 实测后从 12 调大） */
   maxRounds?: number;
   /**
    * 上下文压缩器（A2 Compaction）。
@@ -66,8 +66,8 @@ export function parseMode(content: string | null | undefined): { mode: OutputMod
   return { mode: m[1] as OutputMode, content: raw.slice(m[0].length) };
 }
 
-/** 工具结果注入上下文前的长度上限（防止长输出撑爆窗口） */
-const MAX_TOOL_RESULT_CHARS = 8000;
+/** 工具结果注入上下文前的长度上限（防止长输出撑爆窗口；G8 实测后 8k→16k，大文件读取更完整，上下文膨胀由 A2 Compaction 兜底） */
+const MAX_TOOL_RESULT_CHARS = 16000;
 
 function truncateToolResult(result: unknown): string {
   const s = JSON.stringify(result);
@@ -86,7 +86,7 @@ export class AgentLoop {
 
   constructor(deps: AgentLoopDeps) {
     this.deps = deps;
-    this.maxRounds = deps.maxRounds ?? 12;
+    this.maxRounds = deps.maxRounds ?? 16;
     this.memoryProvider = deps.memoryProvider ?? null;
     // A2：默认启用 Compaction（undefined → 自动创建；null → 显式禁用；实例 → 自定义）
     this.compactor = deps.compactor !== undefined ? deps.compactor : new Compactor(deps.adapter);

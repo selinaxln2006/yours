@@ -442,6 +442,7 @@ async function main(): Promise<void> {
   const httpServer = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', `http://${HOST}:${PORT}`);
     const p = url.pathname;
+    console.log(`[http] ${req.method} ${p}${url.search ? '?' + url.search.slice(0, 80) : ''}`);
 
     try {
       // ---- REST：健康 ----
