@@ -98,6 +98,27 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 
 **A1 结论**：planner 调度层验证通过，goal-level 骨架（①+③地基）就位。下一卡点大概率在 T1 真靶子（会话管理）——子任务规模大、依赖真实 server/UI，届时测 Compaction（②）。
 
+### T1 二次实测（S3，2026-08-27）——假阳性暴露与 K6 闭环
+
+**跑法**：`--goal "console 多会话：server 接入 ChatSessionStore + 会话 API + 前端 UI + 验证全链路（含重启持久化）" --yes`，数据层种子（chat-session-store.ts）已就位。
+
+**结果：5/5 标 done，实际 1/5（假阳性）**——真实数据：
+- t1 探索 ✅ 真实完成；t2（server 接入）❌ t3（前端 UI）❌ t4（切换同步）❌ t5（验证）❌ 全部假 done
+- git diff 铁证：server/main.ts 仅 +1 行（import ChatSessionStore），console.html **0 改动**
+- agent 自己在 t3/t5 就看穿"t2 未真正落地，仍用内存 Map"，但 planner 依然全标 done——**agent 看得到问题，判定机制看不见**
+
+**K6 卡点（三个根因，全从真实失败里挖出来的）**：
+
+| # | 根因 | 现象 | 修复 |
+|---|------|------|------|
+| 1 | **fs_patch 零诊断** | 失败只抛"未找到匹配原文"，agent 无法定位差异 → 盲试 → 放弃（6+ 次连续失败） | fs_patch 失败时返回**最接近位置 + 附近内容预览 + 三种可能原因**（行号前缀/空白/串扰） |
+| 2 | **行号前缀陷阱** | fs_read 返回 `42:code` 带行号，agent 构造 old 时串入行号 → 必然匹配失败 | fs_read desc 明示"返回带行号前缀，构造 fs_patch 的 old 必须去掉"；fs_patch 兼容 CRLF（\r?\n） |
+| 3 | **done 判定不可信** | 失败率阈值 >30% 对"写类工具全失败但总失败率仅 15%"不敏感 → 假 done | planner 新增：**写类工具（write/append/patch）成败单独统计**（写失败≥成功 → failed）+ **写了未读回验证 → failed**（verify 强制执行） |
+
+**verify 纪律进入提示词**：子任务收尾必须 fs_grep/fs_read 读回验证修改已在磁盘生效并报告行号证据，只写不验视为未完成。
+
+**对六件套顺序的修正**：done 判定 = goal-level 的"验收仪表盘"，假阳性 = 仪表盘坏了——**K6 比 Compaction（②）更优先**。A2 顺延到下次 T1 重跑通过后。下次实测目标：K6 修复后 T1 重跑，期望真实完成率显著提升（不再假 done）。
+
 ---
 
 ## 四、G8 第一靶子（候选，待俪宁选）
@@ -211,7 +232,7 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 |------|------------|------------|--------------|
 | **S1（今天）** | ✅ **A0 基线录制完成**（卡点 K1-K4，见 §三） | ✅ B1 服务自启+看门狗、✅ B4 push | Supabase 账号准备（俪宁注册，给我 key） |
 | **S2** | ✅ **K1 修复**（maxTokens 8192 + 分段写纪律）→ ✅ **A1 planner 实现**（`core/planner.ts`，`--goal` 模式，三次实测 100% 完成率，新卡点 K5 已闭环，commit `2d0117b`） | B2 会话管理 API（agent 种子已就位，人类补齐 server 端） | **S1 OAuth 登录**（server 登录端点 + 前端按钮 + user_id 落盘） |
-| **S3** | **T1 二次实测**（子任务队列跑：数据层✅→API→UI→验证，统计完成率）→ 补 A2 Compaction | B2 前端会话管理器 UI | S2 18 键增量同步核心 |
+| **S3** | ✅ **T1 二次实测**（暴露 K6 假阳性：5/5 标 done 实际 1/5，三根因已修复）→ A2 Compaction 顺延至 T1 重跑后 | B2 前端会话管理器 UI（T1 假 done，待重跑） | ✅ 教程已交付（docs/SUPABASE-SETUP.md）；⏳ **等俪宁注册给 key** → S1 登录 + S2 同步 |
 | **S4** | A3 断点续跑（任务树落盘+resume）→ A4 re-plan | B3 index 退役 | S2 收尾 + S3 Realtime |
 | **S5** | T1 三次实测（完成率 → 100% 冲刺）→ A5 C2 收口 | B5 美化（可选） | S3 多浏览器实测 |
 | **S6** | **G8 验收**：T1 全流程 0 插手完成 = 绿灯 | — | 全端打通验收 |
@@ -297,6 +318,15 @@ PAA 的循环引擎（AgentLoop）本身就是**宿主无关 + 工具注入**的
 1. **agent 角色配置化**：`paa/agents/reviewer.json`（工具白名单 + system prompt 模板 + Autonomy=0），与 builder 同引擎、同 CLI——`node cli/main.ts --agent reviewer --once "审查 core/planner.ts"`。**一个 CLI flag 就是新角色**，不需要新代码
 2. **评审循环**：planner 任务树里加 `type: "review"` 节点 → 该子任务用 reviewer 配置跑 → 产出审查报告 JSON → 后续子任务（builder）把它作为 prior 输入 → 修改 → 再评审（≤2 轮收敛）
 3. **功能拓展 agent**：本质同 reviewer——外部开发者按 `paa/agents/*.json` 规范声明角色即可，pkg-loader 加载技能，agent 角色加载"人格+白名单+输出规范"。**"引入其它 agent" = 写一个 JSON + 一个工具包，不是改框架**
+
+### 外部 agent 协作（2026-08-27 俪宁追加：Codex 入场）
+
+> 俪宁原话：**"这个项目我后面会让你和 Codex 一起做，因为我有 GPT Pro 了。不过原本 agent 的代码审查也是需要的，agent 能力也要强化。"**
+
+- **协作模式定调**：WorkBuddy（枢）负责 core/ 大脑层与 G8 主线（上下文连续、实测迭代）；**Codex（GPT Pro）负责独立功能模块/大规模重构/类型债清理**（大上下文适合整块交付）。分工细则见仓库根 `AGENTS.md`
+- **交接入口**：`AGENTS.md` 是给任何 agent 的协作入口（架构地图/运行命令/纪律/分工表），Codex 进项目先读它 + `docs/ROADMAP.md`
+- **内置 reviewer 仍是刚需**：独立于外部 Codex——它是 PAA 产品自身能力（agent 能审自己的代码），也是"评审→修改闭环"的一部分。**已于 S3 提前落地**（见 §三 A1 之后记录）
+- **冲突防线**：core/ 是框架心脏，两个 agent 同时动会踩——改 core/ 前看 `git log --oneline -5` 与 ROADMAP 最新进度，或先问俪宁
 
 ---
 

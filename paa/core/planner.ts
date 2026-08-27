@@ -116,6 +116,7 @@ function taskContextBlock(tree: TaskTree, current: TaskNode): string {
     '# 完成标准（验证）',
     current.verify,
     '',
+    '收尾必须用 fs_grep/fs_read 读回验证修改已在磁盘生效并报告行号证据，只写不验视为未完成。',
     '执行当前子任务，完成后用一句话报告结果。',
   ].join('\n');
 }
@@ -126,7 +127,8 @@ const UNATTENDED_RULE = `
 - 目标描述即最终决策；禁止反问澄清（"请确认""你选一个""我需要澄清"这类行为视为失败）
 - 有歧义时选择最合理假设，直接执行，在最终回答里注明"假设：xxx"
 - 每个子任务的最终结论必须写入回答（会传给后续子任务），格式：结论：xxx
-- 子任务需要产出落盘文件（写代码/报告）时，用 fs_write/fs_append 真实写入，不要只在回答里描述`;
+- 子任务需要产出落盘文件（写代码/报告）时，用 fs_write/fs_append 真实写入，不要只在回答里描述
+- 写文件后必须读回验证（verify 纪律）：用 fs_grep/fs_read 确认修改已在磁盘生效，并报告证据（文件+行号/匹配数）；只写不验视为未完成`;
 
 /** 提取并解析 JSON（容忍 ```json 包裹与前后废话） */
 function parseJsonLoose(raw: string): unknown {
@@ -270,33 +272,55 @@ export class Planner {
       task.rounds = res.rounds;
       task.toolCalls = res.toolCalls;
 
-      // 失败判定：中断 / 工具失败率 > 30% / 无产出反问（K5 兜底）
+      // 失败判定：中断 / 工具失败率 > 30% / 写类工具成败 / 无产出反问 / 写了未验证（K6）
       const toolEvents = res.events.filter((ev) => ev.type === 'tool') as Array<{
-        payload: { result?: { ok?: boolean } };
+        payload: { name?: string; result?: { ok?: boolean } };
       }>;
       const fails = toolEvents.filter((ev) => ev.payload?.result?.ok === false).length;
       const failRate = toolEvents.length ? fails / toolEvents.length : 0;
       const note = res.answer?.slice(0, 400) ?? '';
-      const wrote = res.events.some((ev) => {
+      // K6：写类工具（fs_write/fs_append/fs_patch）单独统计成败——T1 实测暴露：
+      // 写操作全失败但总失败率 < 30% 时会被误判 done（假阳性）
+      let writeOk = 0;
+      let writeFail = 0;
+      let lastWriteIdx = -1;
+      toolEvents.forEach((ev, idx) => {
+        const n = ev.payload?.name;
+        if (n === 'fs_write' || n === 'fs_append' || n === 'fs_patch') {
+          if (ev.payload?.result?.ok === false) writeFail++;
+          else {
+            writeOk++;
+            lastWriteIdx = idx;
+          }
+        }
+      });
+      // 最后一次成功写之后是否有读回验证（fs_grep/fs_read）——"写了不验证"视为未完成
+      const verifyAfterWrite =
+        lastWriteIdx >= 0 &&
+        toolEvents.slice(lastWriteIdx + 1).some((ev) => {
+          const n = ev.payload?.name;
+          return n === 'fs_grep' || n === 'fs_read';
+        });
+      const writeFailed = (writeFail > 0 && writeOk === 0) || writeFail > writeOk;
+      const wrote = writeOk > 0 || res.events.some((ev) => {
         if (ev.type !== 'tool') return false;
         const p = ev.payload as { name?: string };
-        return (
-          p.name === 'fs_write' ||
-          p.name === 'fs_append' ||
-          p.name === 'fs_patch' ||
-          p.name === 'artifact_create' ||
-          p.name === 'memory_save'
-        );
+        return p.name === 'artifact_create' || p.name === 'memory_save';
       });
       const clarify = /(请确认|你选一个|我需要澄清|无法确定|需要你来决定)/.test(note);
       const noOutput = !wrote && clarify && res.rounds <= 4;
+      const wroteNoVerify = writeOk > 0 && !verifyAfterWrite;
 
-      if (res.aborted || failRate > 0.3 || noOutput) {
+      if (res.aborted || failRate > 0.3 || writeFailed || noOutput || wroteNoVerify) {
         const why = res.aborted
           ? '被中断'
-          : failRate > 0.3
-            ? `工具失败率过高(${(failRate * 100).toFixed(0)}%)`
-            : '无产出反问（违反无人值守纪律）';
+          : writeFailed
+            ? `写类工具失败(${writeFail}次)≥成功(${writeOk}次)，代码未落地`
+            : wroteNoVerify
+              ? `写了 ${writeOk} 次但未读回验证修改生效（verify 纪律）`
+              : failRate > 0.3
+                ? `工具失败率过高(${(failRate * 100).toFixed(0)}%)`
+                : '无产出反问（违反无人值守纪律）';
         task.status = 'failed';
         task.note = `${why} | ${note}`.slice(0, 300);
         outcomes[task.id] = { status: 'failed', rounds: res.rounds, toolCalls: res.toolCalls, note: task.note };

@@ -45,7 +45,7 @@ export function createCoreTools(root: string): ToolDefinition[] {
   return [
     {
       name: 'fs_read',
-      desc: '读取文件内容，支持行切片（offset/limit，1 起）',
+      desc: '读取文件内容，支持行切片（offset/limit，1 起）。返回的行带"行号:"前缀（如 42:code），仅用于定位；构造 fs_patch 的 old 时必须去掉前缀',
       params: {
         path: { type: 'string', desc: '相对沙箱根的文件路径' },
         offset: { type: 'number', desc: '起始行（1 起），可选', required: false },
@@ -108,10 +108,10 @@ export function createCoreTools(root: string): ToolDefinition[] {
     },
     {
       name: 'fs_patch',
-      desc: '精确字符串替换。old 必须在文件中唯一出现，否则拒绝（防误伤）',
+      desc: '精确字符串替换。old 必须在文件中唯一出现，否则拒绝（防误伤）。old 必须是不带行号前缀的原文；CRLF/LF 行尾差异自动容错',
       params: {
         path: { type: 'string', desc: '文件路径' },
-        old: { type: 'string', desc: '被替换的原文（必须唯一）' },
+        old: { type: 'string', desc: '被替换的原文（必须唯一，禁止带"行号:"前缀）' },
         new: { type: 'string', desc: '替换后的内容' },
       },
       risk: 3,
@@ -120,10 +120,31 @@ export function createCoreTools(root: string): ToolDefinition[] {
         const old = String(args.old);
         const fresh = String(args.new);
         const raw = await readFile(file, 'utf8');
-        const count = raw.split(old).length - 1;
-        if (count === 0) throw new Error('未找到匹配原文');
-        if (count > 1) throw new Error(`匹配 ${count} 处，必须唯一（防误伤）`);
-        await writeFile(file, raw.replace(old, fresh), 'utf8');
+        if (!old.trim()) throw new Error('old 为空，无法替换');
+        // CRLF 容错：old 的 \n 匹配时容忍 \r\n（Windows 行尾差异），替换按实际匹配长度截断
+        const esc = old.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\n/g, '\r?\n');
+        const matches = [...raw.matchAll(new RegExp(esc, 'g'))];
+        if (matches.length === 0) {
+          // K6 诊断增强：失败时给出最接近位置 + 附近内容预览，帮助 agent 自愈
+          const firstLine = old.split('\n')[0].trim().slice(0, 60);
+          if (firstLine) {
+            const lines = raw.split('\n');
+            const hit = lines.findIndex((l) => l.includes(firstLine));
+            if (hit >= 0) {
+              const lo = Math.max(0, hit - 2);
+              const hi = Math.min(lines.length, hit + 3);
+              const preview = lines.slice(lo, hi).map((l, i) => `${lo + i + 1}:${l}`).join('\n');
+              throw new Error(
+                `未找到匹配原文。诊断：old 首行"${firstLine}"出现在第 ${hit + 1} 行附近，附近内容：\n${preview}\n` +
+                  `请核对：① old 是否误带"行号:"前缀 ② 空白/缩进是否与文件一致 ③ 内容是否来自其他文件（串扰）`,
+              );
+            }
+          }
+          throw new Error(`未找到匹配原文${firstLine ? `：old 首行"${firstLine}"在文件中不存在（内容可能来自其他文件或已过时）` : ''}`);
+        }
+        if (matches.length > 1) throw new Error(`匹配 ${matches.length} 处，必须唯一（防误伤）`);
+        const m = matches[0];
+        await writeFile(file, raw.slice(0, m.index) + fresh + raw.slice(m.index + m[0].length), 'utf8');
         return { patched: file, occurrences: 1 };
       },
     },

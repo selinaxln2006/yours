@@ -146,6 +146,7 @@ function parseArgs(argv: string[]): {
   once: string | null;
   goal: string | null;
   yes: boolean;
+  agent: string | null;
   exportMemory: string | null;
   importMemory: string | null;
 } {
@@ -154,6 +155,7 @@ function parseArgs(argv: string[]): {
   let once: string | null = null;
   let goal: string | null = null;
   let yes = false;
+  let agent: string | null = null;
   let exportMemory: string | null = null;
   let importMemory: string | null = null;
   for (let i = 0; i < argv.length; i++) {
@@ -166,14 +168,51 @@ function parseArgs(argv: string[]): {
     if (argv[i] === '--once' && argv[i + 1]) once = argv[++i];
     if (argv[i] === '--goal' && argv[i + 1]) goal = argv[++i];
     if (argv[i] === '--yes') yes = true;
+    if (argv[i] === '--agent' && argv[i + 1]) agent = argv[++i];
     if (argv[i] === '--export-memory' && argv[i + 1]) exportMemory = path.resolve(argv[++i]);
     if (argv[i] === '--import-memory' && argv[i + 1]) importMemory = path.resolve(argv[++i]);
   }
-  return { root, level, once, goal, yes, exportMemory, importMemory };
+  return { root, level, once, goal, yes, agent, exportMemory, importMemory };
+}
+
+/** agent 角色配置（paa/agents/*.json）：工具白名单 + 人格 prompt + 默认 Autonomy */
+interface AgentConfig {
+  name: string;
+  title: string;
+  description?: string;
+  tools?: string[];
+  autonomy?: number;
+  systemPrompt: string;
+}
+
+/** 加载角色配置；不存在/非法返回 null */
+async function loadAgent(name: string): Promise<AgentConfig | null> {
+  try {
+    const raw = JSON.parse(
+      await readFile(path.join(PAA_ROOT, 'agents', `${name}.json`), 'utf8'),
+    ) as AgentConfig;
+    if (typeof raw.name !== 'string' || typeof raw.systemPrompt !== 'string') return null;
+    return raw;
+  } catch {
+    return null;
+  }
 }
 
 async function main(): Promise<void> {
-  const { root, level, once, goal, yes, exportMemory, importMemory } = parseArgs(process.argv.slice(2));
+  const { root, level, once, goal, yes, agent: agentName, exportMemory, importMemory } = parseArgs(process.argv.slice(2));
+
+  // --agent <name>：角色配置（工具白名单 + 人格 prompt + 默认 Autonomy）
+  const agentCfg = agentName ? await loadAgent(agentName) : null;
+  if (agentName && !agentCfg) {
+    console.error(`❌ agent 角色 "${agentName}" 未找到（应在 paa/agents/${agentName}.json）`);
+    process.exit(1);
+  }
+  const effectiveLevel: AutonomyLevel =
+    agentCfg && typeof agentCfg.autonomy === 'number' ? (agentCfg.autonomy as AutonomyLevel) : level;
+  const baseSystem =
+    (agentCfg?.systemPrompt ?? SYSTEM_PROMPT) +
+    '\n\n# 仓库结构快照（会话初始注入，直接据此定位路径，不要对未知目录反复 fs_list 试错）\n' +
+    await buildRepoTree(root);
 
   // 记忆系统（C4）：JSON 文件存储 + L3 画像种子（首次自动初始化）
   const memory = new JsonMemoryProvider({
@@ -234,7 +273,7 @@ async function main(): Promise<void> {
   const sessionId = await session.newSession();
 
   const audit = (line: string): void => console.log(render.audit(line));
-  const permission = new Permission(level);
+  const permission = new Permission(effectiveLevel);
   // G5：全局 FORBID 名单（config.forbiddenTools，硬拒绝，任何 Autonomy 不可放行）
   for (const f of config.forbiddenTools) permission.forbid(f);
   const pipeline = new ToolPipeline(permission);
@@ -274,23 +313,32 @@ async function main(): Promise<void> {
     for (const c of mcpClients) c.close();
   };
 
+  // --agent 白名单过滤：物理移除白名单外的工具（reviewer 因此"改不了代码"）
+  if (agentCfg?.tools?.length) {
+    const allowed = new Set(agentCfg.tools);
+    const removed: string[] = [];
+    for (const t of pipeline.list()) {
+      if (!allowed.has(t.name)) {
+        pipeline.unregister(t.name);
+        removed.push(t.name);
+      }
+    }
+    console.log(render.status(`角色 ${agentCfg.name}: 仅保留 ${pipeline.list().length} 个工具（移除 ${removed.length} 个: ${removed.join(', ')}）`));
+  }
+
   const adapter = createAdapter(config.llm);
-  const repoTree = await buildRepoTree(root);
   const loop = new AgentLoop({
     adapter,
     pipeline,
     session,
-    systemPrompt:
-      SYSTEM_PROMPT +
-      '\n\n# 仓库结构快照（会话初始注入，直接据此定位路径，不要对未知目录反复 fs_list 试错）\n' +
-      repoTree,
+    systemPrompt: baseSystem,
     memoryProvider: memory,
     maxRounds: 12,
   });
 
   const ctx = { sessionId, cwd: root, ask, audit };
 
-  console.log(render.status(`沙箱根: ${root} | Autonomy: L${level} | 会话: ${sessionId}`));
+  console.log(render.status(`沙箱根: ${root} | Autonomy: L${effectiveLevel}${agentCfg ? ` | 角色: ${agentCfg.name}(${agentCfg.title})` : ''} | 会话: ${sessionId}`));
   const memCount = (await memory.list()).length;
   console.log(render.status(`记忆: ${memCount} 条（paa/memory/store.json，L3 画像种子已注入）`));
   const artCount = (await artifacts.list()).length;
@@ -308,10 +356,7 @@ async function main(): Promise<void> {
       adapter,
       pipeline,
       session,
-      baseSystemPrompt:
-        SYSTEM_PROMPT +
-        '\n\n# 仓库结构快照（会话初始注入，直接据此定位路径，不要对未知目录反复 fs_list 试错）\n' +
-        repoTree,
+      baseSystemPrompt: baseSystem,
       memoryProvider: memory,
       options: { maxTasks: 6, subtaskRounds: 10 },
       onEvent: (taskId, ev) => {
@@ -323,7 +368,7 @@ async function main(): Promise<void> {
     });
     console.log(render.banner());
     console.log(render.status(`🎯 目标模式（planner）: ${goal}`));
-    console.log(render.status(`沙箱根: ${root} | Autonomy: L${level} | 会话: ${sessionId}`));
+    console.log(render.status(`沙箱根: ${root} | Autonomy: L${effectiveLevel} | 会话: ${sessionId}`));
     console.log(render.status('…生成任务树'));
     try {
       const result = await planner.run(goal, ctx);

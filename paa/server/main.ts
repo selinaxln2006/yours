@@ -24,6 +24,7 @@ import { JsonMemoryProvider, createDefaultPersonaSeed } from '../core/memory-pro
 import { FileArtifactProvider } from '../core/artifact-provider.ts';
 import { PkgLoader } from '../core/pkg-loader.ts';
 import { LifeStore, LIFE_KEYS, type LifeKey } from '../core/life-store.ts';
+import { ChatSessionStore } from '../core/chat-session-store.ts';
 import { acceptUpgrade, type WsConnection, type WsMessage } from '../core/ws.ts';
 import { createCoreTools } from '../tools/core-tools.ts';
 import { createMemoryTools } from '../tools/memory-tools.ts';
