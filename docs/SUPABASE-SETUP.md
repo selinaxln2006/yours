@@ -69,6 +69,55 @@
 
 ---
 
+## Step 5 — 建 S2 同步表（一次性，30 秒）
+
+> S2 云同步（18 键增量 + 会话事件游标）需要在数据库里建两张表。**只跑一次**。
+
+1. 左侧边栏点 **SQL Editor** → **New query**
+2. 粘贴下面的 SQL，点 **Run**（或 Ctrl+Enter）：
+
+```sql
+-- ============ S2 云同步表（一次性执行） ============
+
+-- 表 1：生活数据键级镜像（user_id + key 主键，rev 单调递增，LWW 冲突裁决用）
+create table if not exists public.life_sync (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  key text not null,
+  rev bigint not null default 0,
+  data jsonb,
+  updated_at bigint not null default 0,
+  primary key (user_id, key)
+);
+
+-- 表 2：会话事件 append-only（user_id + sid + seq 主键，天然无冲突）
+create table if not exists public.session_events (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  sid text not null,
+  seq bigint not null,
+  payload jsonb,
+  created_at bigint not null default 0,
+  primary key (user_id, sid, seq)
+);
+
+-- RLS：每个用户只能读写自己的行（auth.uid() = user_id）
+alter table public.life_sync enable row level security;
+alter table public.session_events enable row level security;
+
+drop policy if exists "life_sync own" on public.life_sync;
+create policy "life_sync own" on public.life_sync
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+drop policy if exists "session_events own" on public.session_events;
+create policy "session_events own" on public.session_events
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+```
+
+3. 看到 **Success. No rows returned** = 建好了 ✅
+
+> ⚠️ 必须先启用 GitHub OAuth provider（S1 教程），否则 `auth.users` 里没有用户，RLS 策略也建不出来。如果报 `auth` schema 不存在，就是 provider 还没启用。
+
+---
+
 ## 安全提醒（重要）
 
 | ⚠️ | 说明 |
@@ -81,8 +130,8 @@
 
 ## 之后的事（枢来做，你不用管）
 
-1. **S1**：建表（`life/` + `sessions/`）+ Auth 登录端点 + console 前端登录按钮
-2. **S2**：18 键增量同步 + 会话事件游标同步
+1. **S1** ✅ 完成：Auth 登录端点 + console 前端登录按钮（GitHub OAuth）
+2. **S2**：18 键增量同步 + 会话事件游标同步（表已建好后，登录 → 后端自动启用同步；也可手动 POST `/api/sync`）
 3. **S3**：Realtime 跨端实时推送 + 多浏览器实测
 
 > Google OAuth 登录按钮（用 Google 账号登录 PAA）到 S1 时会再给你一份 **Google Cloud Console 配置教程**——那一步稍繁琐（要建 OAuth Client），但也是免费、一次性的。当前这步只需要注册 Supabase。

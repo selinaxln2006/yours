@@ -31,7 +31,9 @@ import { createMemoryTools } from '../tools/memory-tools.ts';
 import { createArtifactTools } from '../tools/artifact-tools.ts';
 import { createPkgTools } from '../tools/pkg-tools.ts';
 import { createWebTools } from '../tools/web-tools.ts';
-import { SupabaseAuth, AuthError } from './auth.ts';
+import { SupabaseAuth, AuthError, type AuthSession } from './auth.ts';
+import { SyncEngine, SyncState } from '../core/sync.ts';
+import { SupabaseSyncTransport } from './sync-rest.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PAA_ROOT = path.resolve(__dirname, '..');
@@ -318,6 +320,51 @@ async function main(): Promise<void> {
   const lifeStore = new LifeStore(path.join(PAA_ROOT, 'data', 'life'));
   await lifeStore.init();
 
+  // ---- S2：云同步状态（登录后按用户启用；本地为 source of truth，云端镜像）----
+  let syncState: SyncState | null = null;
+  let syncEngine: SyncEngine | null = null;
+  let syncUserId = '';
+
+  /** 同步引擎状态摘要（health/me/sync 端点共用） */
+  function syncInfo(): { enabled: boolean; lastSync: number; lastError?: string; dirty: number } {
+    if (!syncEngine || !syncState) return { enabled: false, lastSync: 0, dirty: 0 };
+    return {
+      enabled: true,
+      lastSync: syncState.snapshot.lastSync,
+      lastError: syncState.snapshot.lastError,
+      dirty: Object.keys(syncState.snapshot.dirty).length,
+    };
+  }
+
+  /** 按登录会话启用/复用同步引擎（幂等：同用户且 token 未过期则复用） */
+  async function ensureSync(authSession: AuthSession): Promise<void> {
+    if (!supabaseConfig) return;
+    const tokenStillValid = Date.now() < authSession.expiresAt - 60_000;
+    if (syncEngine && syncUserId === authSession.user.id && tokenStillValid) return;
+    const state = new SyncState(path.join(PAA_ROOT, 'data', 'sync'));
+    await state.init();
+    const transport = new SupabaseSyncTransport({
+      projectUrl: supabaseConfig.url,
+      publishableKey: supabaseConfig.publishableKey,
+      accessToken: authSession.accessToken,
+    });
+    syncState = state;
+    syncEngine = new SyncEngine({ lifeStore, sessionMgr: session, transport, state, userId: authSession.user.id });
+    syncUserId = authSession.user.id;
+    console.log(`[sync] 同步引擎就绪（user ${authSession.user.id.slice(0, 8)}…）`);
+  }
+
+  /** 登录态下的初始后台同步（fire-and-forget，失败只记 lastError 不打断请求） */
+  async function initialSync(): Promise<void> {
+    if (!syncEngine) return;
+    try {
+      const r = await syncEngine.syncOnce();
+      console.log(`[sync] 首次同步完成：pull life ${r.pulledLife.length} / push life ${r.pushedLife.length} / 事件 +${r.pulledEvents} -${r.pushedEvents}`);
+    } catch (e) {
+      console.error(`[sync] 首次同步失败（可稍后手动触发 /api/sync）: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+
   // 对话会话 store（data/sessions/*，启动加载 + 原子写持久化 + 损坏自愈）
   chatStore = new ChatSessionStore(path.join(PAA_ROOT, 'data', 'sessions'));
   await chatStore.init();
@@ -377,9 +424,13 @@ async function main(): Promise<void> {
     maxRounds: MAX_ROUNDS,
   });
 
-  // 数据变更 → WS 推送
+  // 数据变更 → WS 推送 + S2：本地非同步来源的修改标记 dirty（下次 syncOnce 推送）
   lifeStore.on('change', (ev: { key: string; source: string; ts: number }) => {
     broadcast({ type: 'change', key: ev.key, source: ev.source, ts: ev.ts });
+    if (ev.source !== 'sync' && syncState) {
+      syncState.markDirty(ev.key);
+      void syncState.save();
+    }
   });
   lifeStore.on('heal', (ev: { key: string; quarantine: string }) => {
     broadcast({ type: 'heal', key: ev.key, quarantine: ev.quarantine });
@@ -404,6 +455,7 @@ async function main(): Promise<void> {
           memory: (await memory.list()).length,
           sessionId: serverSessionId,
           auth: auth ? 'ready' : 'disabled',
+          sync: syncInfo(),
         });
         return;
       }
@@ -432,10 +484,12 @@ async function main(): Promise<void> {
           return;
         }
         try {
-          const session = await auth.exchangeCode(code, state);
-          await auth.save(session);
-          console.log(`[auth] 登录成功: ${session.user.name} (${session.user.id})`);
-          broadcast({ type: 'auth', event: 'login', user: session.user });
+          const authSession = await auth.exchangeCode(code, state);
+          await auth.save(authSession);
+          console.log(`[auth] 登录成功: ${authSession.user.name} (${authSession.user.id})`);
+          broadcast({ type: 'auth', event: 'login', user: authSession.user });
+          // S2：登录即启用同步引擎并做首次后台同步（云端镜像 → 本地）
+          ensureSync(authSession).then(initialSync).catch((e) => console.error(`[sync] 引擎启动失败: ${e instanceof Error ? e.message : e}`));
           res.writeHead(302, {
             Location: '/',
             'Set-Cookie': `${SESSION_COOKIE}=${session.sid}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_COOKIE_MAX_AGE}`,
@@ -473,6 +527,8 @@ async function main(): Promise<void> {
           console.log(`[auth] 已刷新 token: ${session.user.name}`);
         }
         const rec = await auth.getUserRec(session.user.id);
+        // S2：me 即触发引擎就绪（token 续期后重建），响应附同步状态
+        await ensureSync(session).catch(() => {});
         sendJson(res, 200, {
           ok: true,
           user: session.user,
@@ -480,16 +536,20 @@ async function main(): Promise<void> {
           lastSeen: rec?.lastSeen ?? session.createdAt,
           logins: rec?.logins ?? 1,
           tokenExpiresAt: session.expiresAt,
+          sync: syncInfo(),
         });
         return;
       }
-      // 登出：删会话文件 + 清 cookie
+      // 登出：删会话文件 + 清 cookie + 停用同步引擎
       if (p === '/api/auth/logout' && req.method === 'POST') {
+        syncEngine = null;
+        syncState = null;
+        syncUserId = '';
         if (auth) {
           const sid = getCookie(req, SESSION_COOKIE);
           if (sid) {
             await auth.remove(sid);
-            console.log('[auth] 登出');
+            console.log('[auth] 登出（同步引擎已停用）');
           }
         }
         res.writeHead(200, {
@@ -497,6 +557,39 @@ async function main(): Promise<void> {
           'Set-Cookie': `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`,
         });
         res.end('{"ok":true}');
+        return;
+      }
+
+      // ---- REST：S2 云同步（手动触发一次 syncOnce：pull 云端 → push 本地 dirty）----
+      if (p === '/api/sync' && req.method === 'POST') {
+        if (!auth || !supabaseConfig) {
+          sendJson(res, 503, { error: '未配置 supabase（paa/config.json 缺 supabase 字段）' });
+          return;
+        }
+        const sid = getCookie(req, SESSION_COOKIE);
+        if (!sid) {
+          sendJson(res, 401, { error: '未登录' });
+          return;
+        }
+        let authSession = await auth.get(sid);
+        if (!authSession) {
+          sendJson(res, 401, { error: '会话不存在或已失效，请重新登录' });
+          return;
+        }
+        const refreshed = await auth.refreshIfNeeded(authSession);
+        if (refreshed) authSession = refreshed;
+        try {
+          await ensureSync(authSession);
+          if (!syncEngine || !syncState) {
+            sendJson(res, 503, { error: '同步引擎未就绪' });
+            return;
+          }
+          const result = await syncEngine.syncOnce();
+          console.log(`[sync] 手动同步完成：pull life ${result.pulledLife.length} / push life ${result.pushedLife.length} / 事件 +${result.pulledEvents} -${result.pushedEvents}`);
+          sendJson(res, 200, { ok: true, result, sync: syncInfo() });
+        } catch (e) {
+          sendJson(res, 502, { ok: false, error: e instanceof Error ? e.message : String(e), sync: syncInfo() });
+        }
         return;
       }
 
