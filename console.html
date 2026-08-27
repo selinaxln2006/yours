@@ -701,9 +701,9 @@ function connect(){
     handleWs(m);
   };
   ws.onclose = () => {
-    if (!S.connected) return;
+    const was = S.connected;
     S.connected = false; renderHeader();
-    pushSys('连接断开，3 秒后重连…');
+    if (was) pushSys('连接断开，3 秒后重连…');
     S._reconn = setTimeout(connect, 3000);
   };
   ws.onerror = () => { S.connected = false; renderHeader(); };
@@ -876,8 +876,14 @@ async function fetchData(key){
     const j = await r.json();
     if (key){ if (!S.data) S.data = {}; S.data[key] = j[key] ?? j.value ?? j; }
     else S.data = j;
+    if (S.offline){ S.offline = false; toast('服务已恢复连接'); }
     renderPanel(); renderCounts();
-  }catch(e){ /* 网络抖动忽略 */ }
+  }catch(e){
+    // 服务不可达：标记离线 + 5 秒静默重试（恢复后自动出数据，无需刷新）
+    if (!S.offline){ S.offline = true; renderPanel(); }
+    clearTimeout(S._retry);
+    S._retry = setTimeout(() => fetchData(key), 5000);
+  }
 }
 
 /* ---------- v2 · 布局（收缩/调宽/全屏） ---------- */
@@ -1135,6 +1141,11 @@ function answerConfirm(ok, always){
 /* ---------- 面板：通用 ---------- */
 function renderPanel(){
   const body = $('#panelBody'); body.textContent = '';
+  if (S.offline){
+    const w = document.createElement('div'); w.className='empty';
+    w.innerHTML = '⚠️ <b>服务未连接</b>（127.0.0.1:8765）<br>正在自动重试…<br><small>可运行：<code>node paa/server/main.ts</code></small>';
+    body.appendChild(w); return;
+  }
   const renderers = { schedule: pSchedule, fitness: pFitness, wellness: pWellness, finance: pFinance, todos: pTodos, goals: pGoals, memory: pMemory, settings: pSettings };
   const fn = renderers[S.tab] || pSchedule;
   body.appendChild(panelHd(S.tab));
@@ -1999,6 +2010,7 @@ function init(){
   tickClock(); setInterval(tickClock, 1000);
   pushMsg({kind:'sys', text:'枢 · PAA Console v1 — 数据层已文件化，对话与面板双向实时。试试：记录今晚睡眠 7.5 小时', ts: Date.now()});
   renderComposer(); renderHeader();
+  renderPanel();          // 先渲染面板骨架，不依赖首拉成功
   fetchData();
   connect();
 }
