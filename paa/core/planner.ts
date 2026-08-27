@@ -95,7 +95,8 @@ JSON 格式：
 - 目标已包含明确约束（对象/范围/输出形式）时，禁止拆"确认需求/与用户确认"类子任务——直接进入实现
 - 只有真正缺失关键参数时才拆"明确口径"子任务，且该子任务必须自主选择最合理默认值并注明假设，不允许设计成"要求用户回答"
 - 【K7-③ 拆解锚定】目标包含前端/UI 需求（如"多会话""前端界面""页面交互"）时，必须有一个子任务明确写『修改 console.html』（仓库唯一前端文件）；禁止用 CLI 脚本/命令行客户端替代前端 UI 的实现——前端 UI 与 CLI 是两个独立交付物
-- 【K8 可执行 verify】verify 必须是 agent 自己能执行的检查（fs_grep 搜引用 / node --check / HTTP 请求 / 跑脚本）；禁止写"浏览器打开能看到/人工确认"这类需要人类在场或没有工具可执行的验证方式`;
+- 【K8 可执行 verify】verify 必须是 agent 自己能执行的检查（fs_grep 搜引用 / node --check / HTTP 请求 / 跑脚本）；禁止写"浏览器打开能看到/人工确认"这类需要人类在场或没有工具可执行的验证方式
+- 【C2 现场造工具】子任务允许"现场创建 ToolPkg（fs_write 写 manifest.json + impl.mjs → pkg_install 加载）"来获得专用能力；目标需要专用计算/解析/转换能力时，拆一个子任务专门造包（写文件 + 安装 + pkg_list 确认），后续子任务直接调用 pkg_<name>_<tool>`;
 }
 
 /** 子任务执行时的任务树状态块（追加在 base system prompt 之后，替代跨 run prior） */
@@ -138,7 +139,15 @@ const UNATTENDED_RULE = `
 - 【K7-② 语义验证】收尾验证 = 语义断言：用 fs_grep 在依赖方文件搜新增符号的引用，或跑最小检查（node --check / node --test / npm run check）。只读回自己刚写的内容 ≠ 完成验证
 - 【K7-④ Windows 跨平台】本机是 Windows：无 cat/grep 命令——文本查看/搜索一律用内置 fs_read/fs_grep 工具，不要用 shell 的 cat/grep；shell 命令用 PowerShell 语法；端口被占用（EADDRINUSE）时先查占用进程杀掉或换端口，不要卡死
 - 【K8 动手纪律】实现类子任务（要修改/新增文件）：先用 ≤4 轮理解（用 fs_grep 定位关键符号/挂载点，不要通读大文件），然后立即写第一版代码，再迭代补全。禁止把全部轮次用于阅读理解、最后因轮次耗尽而零产出——只读不写 = 未完成
-- 【K8 脚手架策略】修改大文件（如 console.html 100KB+）：不要追求一次改完美——先实现最小可用版本（如一个会话列表 + 切换按钮），用 fs_patch 精确插入，再花剩余轮次迭代补全；宁可用 fs_grep 定位挂载点后小步多次改，不要"完全理解后才动手"`;
+- 【K8 脚手架策略】修改大文件（如 console.html 100KB+）：不要追求一次改完美——先实现最小可用版本（如一个会话列表 + 切换按钮），用 fs_patch 精确插入，再花剩余轮次迭代补全；宁可用 fs_grep 定位挂载点后小步多次改，不要"完全理解后才动手"
+- 【C2 现场造工具（一等动作）】遇到"现有工具做不了/做起来很笨"（缺专用能力、重复劳动、需要计算/转换），不要硬凑也不要放弃——现场创建 ToolPkg 并立即使用：
+  ① 建目录：fs 工具无 mkdir，先用 shell_run 建包目录（Windows: New-Item -ItemType Directory -Force 'paa/artifacts/c2/<name>'）
+  ② fs_write 写 manifest.json 与 impl.mjs（manifest 的 name 必须等于目录名 <name>；name 只允许小写字母/数字/下划线；impl.mjs 必须命名导出 createPkgTools）
+  ③ pkg_install src=paa/artifacts/c2/<name> → 自动拷入 pkgs/ 并加载注册；下一轮起工具 pkg_<name>_<tool> 立即可用
+  ④ pkg_list 确认加载（error 字段非空 → 读错误修文件，pkg_uninstall 同名包后重新 pkg_install）
+  manifest.json 最小模板：{"name":"<name>","version":"0.1.0","desc":"用途","tools":[{"name":"<tool>","desc":"工具说明","params":{"a":{"type":"number","required":true}},"risk":1}]}
+  impl.mjs 最小模板：export function createPkgTools(env){ return { <tool>: async (args) => ({ result: <计算逻辑> }) }; }
+  约束：一次任务最多现场造 2 个包；impl ≤50 行；能用现有工具组合就优先组合，确实缺能力才造；造完必须用于完成任务（否则视为空转）`;
 
 /** 提取并解析 JSON（容忍 ```json 包裹与前后废话） */
 function parseJsonLoose(raw: string): unknown {

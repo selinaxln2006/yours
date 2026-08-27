@@ -88,7 +88,16 @@ export function createCoreTools(root: string): ToolDefinition[] {
       risk: 3,
       handler: async (args: Record<string, unknown>) => {
         const file = resolve(String(args.path));
-        await writeFile(file, String(args.content ?? ''), 'utf8');
+        try {
+          await writeFile(file, String(args.content ?? ''), 'utf8');
+        } catch (err) {
+          // C2 现场造工具场景：父目录不存在是常见首错（fs 工具无 mkdir），给一键指引
+          if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+            const parent = path.dirname(file).replace(/\\/g, '/');
+            throw new Error(`写入失败：父目录不存在（${parent}）。fs 工具无 mkdir，请先用 shell_run 建目录：New-Item -ItemType Directory -Force '${parent}'，再重试 fs_write`);
+          }
+          throw err;
+        }
         return { wrote: file, bytes: String(args.content ?? '').length };
       },
     },
@@ -102,7 +111,15 @@ export function createCoreTools(root: string): ToolDefinition[] {
       risk: 3,
       handler: async (args: Record<string, unknown>) => {
         const file = resolve(String(args.path));
-        await appendFile(file, String(args.content ?? ''), 'utf8');
+        try {
+          await appendFile(file, String(args.content ?? ''), 'utf8');
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
+            const parent = path.dirname(file).replace(/\\/g, '/');
+            throw new Error(`追加失败：父目录不存在（${parent}）。请先用 shell_run 建目录：New-Item -ItemType Directory -Force '${parent}'，再重试 fs_append`);
+          }
+          throw err;
+        }
         return { appended: file };
       },
     },
