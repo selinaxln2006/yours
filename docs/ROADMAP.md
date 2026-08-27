@@ -140,6 +140,22 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 
 **下一步**：① K7 修复（verify 时序/语义 + 拆解锚定 + Windows 提示）→ ② console.html 前端补全（人类/agent 皆可，T1 收口）→ ③ 之后 A2 Compaction。
 
+### T1 四五六次实测（S5，2026-08-27）——K7/K8 修复 + UI 人类补写，T1 收口
+
+**K7 四根因修复落地**（`core/planner.ts`）：① verify 时序——"写了未自验"从直接 failed 降级为 warning（区分真失败=写失败）；② verify 语义——提示词要求语义断言（grep 引用点/跑最小检查），读回不算；③ 拆解锚定——prompt 强制前端 UI=改 console.html；④ Windows 提示——cat→fs_read/fs_grep、EADDRINUSE 处理。
+
+| 跑次 | 判定 | 真实完成度 | 观察 |
+|------|------|-----------|------|
+| 4 | 5/5 done | 3.5/5（t1/t2/t4 真，t5 半，**t3 假**） | K7-① 生效（t5 降级 warning 未误杀）；t3 拆解锚定成功（改 console.html）但**探索过深零产出** → 新卡点 **K8 空转假阳性**（实现类子任务无写操作无证据仍判 done） |
+| 5 | 1/5 done | t2/t3/t5 被 **K8 误杀**（核对确认型证据词不全 + 验证类被"创建"触发） | K8 v1 矫枉过正，3/4 误杀；t4 正确抓出空转 |
+| 6 | 6/6 done | **console.html 依旧 0 改动**（t4 逃逸：verify 含"确认"命中验证豁免） | K8 v3 修正（VERIFY 只查 desc）；判定机制已收敛但 agent 对 112KB 大文件的行为模式固化（通读→轮次耗尽→零产出） |
+
+**K8 v3 规则**（最终版）：实现类子任务（desc 含实现词）零写操作且无"功能已就位"证据（已满足/已完整实现/无需改动等）→ failed；验证类任务豁免只看 desc（验证/走通/回归是动作，"确认 XXX 存在"是验收措辞不算）。
+
+**决策：console.html UI 人类补写（ROADMAP §三 预设路径"人类/agent 皆可"）**。已实现：会话栏（`#sessionBar`）——「会话」按钮展开/收起、会话列表（高亮当前/消息数/✕ 删除）、＋新建、点击切换（GET /api/sessions/:id 取 uiHistory 还原画布）、删除当前会话自动切第一个。JS 语法验证通过，server 会话 API 全链路 curl 验证通过（POST 创建 c-mtbc6cw75904）。**T1 至此收口**：数据层（chat-session-store）+ server 会话 API + CLI 客户端（sessions-client.ts）+ console.html 前端 UI 全部就位。
+
+**下一步**：A2 Compaction（上下文预算 + 摘要替换，50+ 轮不爆）→ A3 断点续跑。S 线：S2 云同步（18 键增量 + 会话游标）。
+
 ---
 
 ## 四、G8 第一靶子（候选，待俪宁选）

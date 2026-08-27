@@ -88,7 +88,9 @@ JSON 格式：
 - deps 只写直接依赖（如 t2 依赖 t1 → "deps":["t1"]）
 - id 从 t1 开始连续编号
 - 目标已包含明确约束（对象/范围/输出形式）时，禁止拆"确认需求/与用户确认"类子任务——直接进入实现
-- 只有真正缺失关键参数时才拆"明确口径"子任务，且该子任务必须自主选择最合理默认值并注明假设，不允许设计成"要求用户回答"`;
+- 只有真正缺失关键参数时才拆"明确口径"子任务，且该子任务必须自主选择最合理默认值并注明假设，不允许设计成"要求用户回答"
+- 【K7-③ 拆解锚定】目标包含前端/UI 需求（如"多会话""前端界面""页面交互"）时，必须有一个子任务明确写『修改 console.html』（仓库唯一前端文件）；禁止用 CLI 脚本/命令行客户端替代前端 UI 的实现——前端 UI 与 CLI 是两个独立交付物
+- 【K8 可执行 verify】verify 必须是 agent 自己能执行的检查（fs_grep 搜引用 / node --check / HTTP 请求 / 跑脚本）；禁止写"浏览器打开能看到/人工确认"这类需要人类在场或没有工具可执行的验证方式`;
 }
 
 /** 子任务执行时的任务树状态块（追加在 base system prompt 之后，替代跨 run prior） */
@@ -116,7 +118,7 @@ function taskContextBlock(tree: TaskTree, current: TaskNode): string {
     '# 完成标准（验证）',
     current.verify,
     '',
-    '收尾必须用 fs_grep/fs_read 读回验证修改已在磁盘生效并报告行号证据，只写不验视为未完成。',
+    '收尾验证必须是语义验证，不是读回：用 fs_grep 在依赖方文件中搜索你新增符号的引用（如 server/main.ts 中 grep 新 store 类名、console.html 中 grep 新函数名），或运行最小检查（node --check 语法 / node --test 单文件 / npm run check）。只读回自己刚写的内容不算完成验证。',
     '执行当前子任务，完成后用一句话报告结果。',
   ].join('\n');
 }
@@ -128,7 +130,10 @@ const UNATTENDED_RULE = `
 - 有歧义时选择最合理假设，直接执行，在最终回答里注明"假设：xxx"
 - 每个子任务的最终结论必须写入回答（会传给后续子任务），格式：结论：xxx
 - 子任务需要产出落盘文件（写代码/报告）时，用 fs_write/fs_append 真实写入，不要只在回答里描述
-- 写文件后必须读回验证（verify 纪律）：用 fs_grep/fs_read 确认修改已在磁盘生效，并报告证据（文件+行号/匹配数）；只写不验视为未完成`;
+- 【K7-② 语义验证】收尾验证 = 语义断言：用 fs_grep 在依赖方文件搜新增符号的引用，或跑最小检查（node --check / node --test / npm run check）。只读回自己刚写的内容 ≠ 完成验证
+- 【K7-④ Windows 跨平台】本机是 Windows：无 cat/grep 命令——文本查看/搜索一律用内置 fs_read/fs_grep 工具，不要用 shell 的 cat/grep；shell 命令用 PowerShell 语法；端口被占用（EADDRINUSE）时先查占用进程杀掉或换端口，不要卡死
+- 【K8 动手纪律】实现类子任务（要修改/新增文件）：先用 ≤4 轮理解（用 fs_grep 定位关键符号/挂载点，不要通读大文件），然后立即写第一版代码，再迭代补全。禁止把全部轮次用于阅读理解、最后因轮次耗尽而零产出——只读不写 = 未完成
+- 【K8 脚手架策略】修改大文件（如 console.html 100KB+）：不要追求一次改完美——先实现最小可用版本（如一个会话列表 + 切换按钮），用 fs_patch 精确插入，再花剩余轮次迭代补全；宁可用 fs_grep 定位挂载点后小步多次改，不要"完全理解后才动手"`;
 
 /** 提取并解析 JSON（容忍 ```json 包裹与前后废话） */
 function parseJsonLoose(raw: string): unknown {
@@ -272,9 +277,9 @@ export class Planner {
       task.rounds = res.rounds;
       task.toolCalls = res.toolCalls;
 
-      // 失败判定：中断 / 工具失败率 > 30% / 写类工具成败 / 无产出反问 / 写了未验证（K6）
+      // 失败判定：中断 / 工具失败率 > 30% / 写类工具成败 / 无产出反问 / verify 分层（K6 + K7）
       const toolEvents = res.events.filter((ev) => ev.type === 'tool') as Array<{
-        payload: { name?: string; result?: { ok?: boolean } };
+        payload: { name?: string; result?: { ok?: boolean }; arguments?: unknown };
       }>;
       const fails = toolEvents.filter((ev) => ev.payload?.result?.ok === false).length;
       const failRate = toolEvents.length ? fails / toolEvents.length : 0;
@@ -294,13 +299,26 @@ export class Planner {
           }
         }
       });
-      // 最后一次成功写之后是否有读回验证（fs_grep/fs_read）——"写了不验证"视为未完成
-      const verifyAfterWrite =
-        lastWriteIdx >= 0 &&
-        toolEvents.slice(lastWriteIdx + 1).some((ev) => {
-          const n = ev.payload?.name;
-          return n === 'fs_grep' || n === 'fs_read';
-        });
+      // 【K7-①/②】verify 分层判定（最后一次成功写之后的验证动作）：
+      // - strong = 语义验证（fs_grep 搜引用点 / shell 跑 node --check|--test|npm test）
+      // - weak = 仅 fs_read 读回（读回自己刚写的内容 ≠ 功能完成）
+      // - none = 无任何验证
+      // 写失败（writeFailed）→ 真失败（K6 保留）；写了但未自验 → 降级 warning 仍判 done——
+      // 误杀真实产出（写了 5-6 次完整代码仅因轮次耗尽没自验）代价 > 放过半成品；
+      // 半成品由任务树中"全局验证"子任务（如 t5 全链路验证）兜底抓出
+      const afterWrites = lastWriteIdx >= 0 ? toolEvents.slice(lastWriteIdx + 1) : [];
+      const verifyStrong = afterWrites.some((ev) => {
+        const n = ev.payload?.name;
+        if (n === 'fs_grep') return true;
+        if (n === 'shell_run') {
+          const args = ev.payload?.arguments as { command?: string; cmd?: string } | undefined;
+          const cmd = String(args?.command ?? args?.cmd ?? '');
+          return /node .*--check|node .*--test|npm test|npm run check/i.test(cmd);
+        }
+        return false;
+      });
+      const verifyWeak = afterWrites.some((ev) => ev.payload?.name === 'fs_read');
+      const verifyLevel = verifyStrong ? 'strong' : verifyWeak ? 'weak' : 'none';
       const writeFailed = (writeFail > 0 && writeOk === 0) || writeFail > writeOk;
       const wrote = writeOk > 0 || res.events.some((ev) => {
         if (ev.type !== 'tool') return false;
@@ -309,15 +327,29 @@ export class Planner {
       });
       const clarify = /(请确认|你选一个|我需要澄清|无法确定|需要你来决定)/.test(note);
       const noOutput = !wrote && clarify && res.rounds <= 4;
-      const wroteNoVerify = writeOk > 0 && !verifyAfterWrite;
+      // 【K8 v3】空转假阳性：实现类子任务（desc 含实现关键词）零写操作且无"功能已就位"证据 → failed
+      // （t4 型：全程只读探索后轮次耗尽零产出；核对确认型例外：功能本已存在，note 含"已满足/已完整实现"等证据）
+      // v2 修正（第五跑 3 误杀）：证据词扩充 + 验证类豁免 + 去"创建"
+      // v3 修正（第六跑 t4 逃逸）：VERIFY 豁免只查 desc 不查 verify——"fs_grep 确认 XXX 存在"是实现类
+      // 任务的验收措辞（verify），不是验证类任务特征；验证类任务的标志在 desc（"验证/走通/回归"是动作）
+      const IMPL_RE = /(修改|新增|实现|写入|生成|添加|增加|落地|改造|接入|挂载|编写)/;
+      const DONE_EVIDENCE_RE =
+        /(已完成|已存在|已实现|已经完成|已由|前序|已落地|已经具备|已有|已对接|已满足|无需改动|无需修改|已完整|已齐全|已就绪|已经接入)/;
+      const VERIFY_TASK_RE = /(验证|测试|检查|走通|回归|核实|复核|审查)/;
+      const idleFakeDone =
+        !VERIFY_TASK_RE.test(task.desc) &&
+        (IMPL_RE.test(task.desc) || IMPL_RE.test(task.verify)) &&
+        writeOk === 0 &&
+        writeFail === 0 &&
+        !DONE_EVIDENCE_RE.test(note);
 
-      if (res.aborted || failRate > 0.3 || writeFailed || noOutput || wroteNoVerify) {
+      if (res.aborted || failRate > 0.3 || writeFailed || noOutput || idleFakeDone) {
         const why = res.aborted
           ? '被中断'
           : writeFailed
             ? `写类工具失败(${writeFail}次)≥成功(${writeOk}次)，代码未落地`
-            : wroteNoVerify
-              ? `写了 ${writeOk} 次但未读回验证修改生效（verify 纪律）`
+            : idleFakeDone
+              ? '实现类子任务零写操作且无"功能已就位"证据（空转假阳性，只读不写=未完成）'
               : failRate > 0.3
                 ? `工具失败率过高(${(failRate * 100).toFixed(0)}%)`
                 : '无产出反问（违反无人值守纪律）';
@@ -326,8 +358,14 @@ export class Planner {
         outcomes[task.id] = { status: 'failed', rounds: res.rounds, toolCalls: res.toolCalls, note: task.note };
       } else {
         task.status = 'done';
-        task.note = note;
-        outcomes[task.id] = { status: 'done', rounds: res.rounds, toolCalls: res.toolCalls, note };
+        const verifyWarn =
+          writeOk > 0 && verifyLevel === 'none'
+            ? `⚠️ 写了 ${writeOk} 次但无任何读回/grep 验证（降级 warning，由全局验证子任务兜底）| `
+            : writeOk > 0 && verifyLevel === 'weak'
+              ? `⚠️ 仅读回未做语义验证（应 grep 引用点/跑最小检查）| `
+              : '';
+        task.note = (verifyWarn + note).slice(0, 300);
+        outcomes[task.id] = { status: 'done', rounds: res.rounds, toolCalls: res.toolCalls, note: task.note };
         doneCount++;
       }
       await this.saveTree(tree, ctx);

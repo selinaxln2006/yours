@@ -405,6 +405,23 @@ main{display:flex;min-height:0}
 
 /* a11y：焦点可见 */
 :focus-visible{outline:2px solid var(--acc);outline-offset:1px;border-radius:2px}
+
+/* ---- T1 多会话：会话栏 ---- */
+#sessionBar{display:none;border-top:1px solid var(--line);background:var(--bg1);max-height:38%;overflow-y:auto}
+#sessionBar.show{display:block}
+#sessionBar .sessHead{display:flex;align-items:center;gap:8px;padding:6px 10px;font-size:11px;color:var(--text2);position:sticky;top:0;background:var(--bg1);z-index:1}
+#sessionBar .sessHead b{flex:1;font-weight:600}
+#sessionBar .sessHead button{background:var(--acc);color:#fff;border:none;border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer}
+#sessionBar .sessHead button:hover{filter:brightness(1.1)}
+#sessionList{list-style:none;margin:0;padding:2px 6px 8px}
+#sessionList li{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:5px;cursor:pointer;font-size:12px;color:var(--text0)}
+#sessionList li:hover{background:var(--bg2)}
+#sessionList li.on{background:var(--acc);color:#fff}
+#sessionList li .st{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#sessionList li .sc{font-size:10px;opacity:.6;flex-shrink:0}
+#sessionList li .xdel{opacity:0;border:none;background:none;color:inherit;cursor:pointer;font-size:11px;flex-shrink:0}
+#sessionList li:hover .xdel{opacity:.8}
+#sessionList li .xdel:hover{opacity:1;color:var(--err)}
 </style>
 </head>
 <body>
@@ -437,11 +454,16 @@ main{display:flex;min-height:0}
         <div id="chatHead">
           <span class="ttl"><b>航迹</b> · 日志</span>
           <span class="sub" id="sessTxt">session --</span>
+          <button id="sessBtn" title="会话列表：切换/新建/删除">会话</button>
           <button id="clearBtn" title="清空本会话显示（不影响数据）">清屏</button>
           <span class="ctrl">
             <button class="iconbtn" id="chatCollapse" title="收起为边栏">«</button>
             <button class="iconbtn" id="chatFs" title="全屏 / 还原">⛶</button>
           </span>
+        </div>
+        <div id="sessionBar">
+          <div class="sessHead"><b>会话</b><button id="sessNew" title="新建会话">＋ 新建</button></div>
+          <ul id="sessionList"></ul>
         </div>
         <div id="stream"></div>
         <div id="composer">
@@ -2041,6 +2063,67 @@ function toast(msg){
   S.toastTimer = setTimeout(()=>t.classList.remove('show'), 2600);
 }
 
+/* ---------- T1 多会话：会话栏 ---------- */
+async function loadSessions(){
+  try{
+    const r = await fetch('/api/sessions');
+    if (!r.ok) return;
+    const j = await r.json();
+    renderSessionList(j.sessions || []);
+  }catch(e){ /* 服务不可达静默 */ }
+}
+function renderSessionList(list){
+  const ul = $('#sessionList');
+  if (!ul) return;
+  if (!list.length){ ul.innerHTML = '<li style="cursor:default;opacity:.55">暂无会话，点「＋ 新建」开始</li>'; return; }
+  ul.innerHTML = list.map((s) => {
+    const on = s.id === S.sessionId ? ' class="on"' : '';
+    return '<li' + on + ' data-sid="' + esc(s.id) + '">' +
+      '<span class="st">' + esc(s.title) + '</span>' +
+      '<span class="sc">' + (s.messageCount || 0) + '</span>' +
+      '<button class="xdel" data-del="' + esc(s.id) + '" title="删除会话">✕</button></li>';
+  }).join('');
+}
+async function newSession(){
+  try{
+    const r = await fetch('/api/sessions', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+    if (!r.ok) return;
+    const j = await r.json();
+    S.sessionId = j.session?.id || null;
+    S.msgs = []; renderStream(); renderHeader();
+    loadSessions();
+  }catch(e){ toast('新建会话失败'); }
+}
+async function switchSession(id){
+  try{
+    const r = await fetch('/api/sessions/' + encodeURIComponent(id));
+    if (!r.ok) return;
+    const j = await r.json();
+    S.sessionId = id;
+    S.msgs = (j.session?.uiHistory || []).map((m) => Object.assign({}, m));
+    renderStream(); autoScroll(); renderHeader();
+    loadSessions();
+  }catch(e){ toast('切换会话失败'); }
+}
+async function deleteSession(id){
+  try{
+    const r = await fetch('/api/sessions/' + encodeURIComponent(id), { method:'DELETE' });
+    if (!r.ok) return;
+    if (S.sessionId === id){
+      const j = await (await fetch('/api/sessions')).json();
+      const first = (j.sessions || [])[0];
+      if (first) await switchSession(first.id);
+      else { S.sessionId = null; S.msgs = []; renderStream(); renderHeader(); }
+    }
+    loadSessions();
+  }catch(e){ toast('删除会话失败'); }
+}
+function toggleSessionBar(){
+  const bar = $('#sessionBar');
+  bar.classList.toggle('show');
+  if (bar.classList.contains('show')) loadSessions();
+}
+
 /* ---------- init ---------- */
 function init(){
   document.querySelectorAll('.tab').forEach(tab => tab.addEventListener('click', () => {
@@ -2055,6 +2138,14 @@ function init(){
     if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); send(); }
   });
   $('#sendBtn').addEventListener('click', send);
+  $('#sessBtn').addEventListener('click', toggleSessionBar);
+  $('#sessNew').addEventListener('click', newSession);
+  $('#sessionList').addEventListener('click', (e) => {
+    const del = e.target.closest('[data-del]');
+    if (del){ e.stopPropagation(); deleteSession(del.dataset.del); return; }
+    const li = e.target.closest('li[data-sid]');
+    if (li && li.dataset.sid !== S.sessionId) switchSession(li.dataset.sid);
+  });
   $('#clearBtn').addEventListener('click', () => { S.msgs = []; renderStream(); });
   $('#confAllow').addEventListener('click', () => answerConfirm(true, false));
   $('#confOnce').addEventListener('click', () => answerConfirm(true, true));
