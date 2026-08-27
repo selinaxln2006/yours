@@ -82,6 +82,22 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 
 **A0 副产品**：agent 已证明"给规划指令 → 输出可执行方案"的假设成立，planner 层（prompt 引导 + 任务树解析）可行性获实测背书。
 
+### A1 实现与三次实测（2026-08-27，commit `2d0117b`）
+
+**实现**：`core/planner.ts`（322 行）——任务树生成（LLM 低温单次调用→容错 JSON 解析→归一化）→ Kahn 拓扑排序 → 子任务队列逐个独立 `run()`（每个子任务独立 maxRounds=10）→ 任务树落盘 `runs/<sid>/task-tree.json`（= ③断点续跑的状态地基）→ 失败判定（中断/工具失败率>30%/无产出反问）。CLI 新增 `--goal "模糊目标" [--yes]` 模式。
+
+**三次实测曲线（真实数据）**：
+
+| 次 | 目标 | 结果 | 暴露的卡点 |
+|----|------|------|-----------|
+| 1 | "统计 paa/core 的 .ts 总行数写入 artifacts/core-lines.txt" | 5/5 done 但**实际零产出** | **K5：子任务产出不传递**——t1"确认统计目标"的结论没传给 t2-t5，agent 反复说"t1 确认的内容丢失了"；且"指令模糊先反问"纪律在无人值守模式下发疯，5 个子任务全在反问澄清 |
+| 2 | 同上（K5 修复后） | **4/5 done，产物真实** | t3 `terminated` 0 轮 = undici 网络瞬断（DeepSeek 连接重置），非逻辑 bug → 加瞬断自动重试 1 次；agent 自主写 stats.cjs 并解决 ESM 兼容（type:module → .cjs） |
+| 3 | "统计 paa/core .ts 数量写入 artifacts/core-count.txt"（约束明确） | **4/4 done，100% 完成率**，报告落盘 docs/STATS-REPORT.md，交叉验证误差 0 | 轻微 scope 漂移：agent 自选输出到 docs/STATS-REPORT.md 而非指定文件（verify 未强制执行的已知局限） |
+
+**K5 修复方案（已落地）**：① 前序 done 子任务的 note（最终回答摘要）注入后续子任务的 system prompt（"已完成子任务的产出，直接引用，不要重新调查"）；② 无人值守纪律（禁止反问澄清、歧义选最合理假设并注明、结论必须落盘）；③ 任务树生成 prompt 禁止拆"确认需求"类子任务；④ 无产出反问判定（低轮次+无写类工具+反问特征 → failed）。
+
+**A1 结论**：planner 调度层验证通过，goal-level 骨架（①+③地基）就位。下一卡点大概率在 T1 真靶子（会话管理）——子任务规模大、依赖真实 server/UI，届时测 Compaction（②）。
+
 ---
 
 ## 四、G8 第一靶子（候选，待俪宁选）
@@ -194,7 +210,7 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 | 会话 | A 线（主线） | B 线（并行） | S 线（云同步） |
 |------|------------|------------|--------------|
 | **S1（今天）** | ✅ **A0 基线录制完成**（卡点 K1-K4，见 §三） | ✅ B1 服务自启+看门狗、✅ B4 push | Supabase 账号准备（俪宁注册，给我 key） |
-| **S2** | **K1 修复**（输出截断：max_tokens + 分段写纪律）→ **A1 planner 实现**（prompt 引导任务树 + 解析成队列 + 子任务独立 run） | B2 会话管理 API（agent 种子已就位，人类补齐 server 端） | **S1 OAuth 登录**（server 登录端点 + 前端按钮 + user_id 落盘） |
+| **S2** | ✅ **K1 修复**（maxTokens 8192 + 分段写纪律）→ ✅ **A1 planner 实现**（`core/planner.ts`，`--goal` 模式，三次实测 100% 完成率，新卡点 K5 已闭环，commit `2d0117b`） | B2 会话管理 API（agent 种子已就位，人类补齐 server 端） | **S1 OAuth 登录**（server 登录端点 + 前端按钮 + user_id 落盘） |
 | **S3** | **T1 二次实测**（子任务队列跑：数据层✅→API→UI→验证，统计完成率）→ 补 A2 Compaction | B2 前端会话管理器 UI | S2 18 键增量同步核心 |
 | **S4** | A3 断点续跑（任务树落盘+resume）→ A4 re-plan | B3 index 退役 | S2 收尾 + S3 Realtime |
 | **S5** | T1 三次实测（完成率 → 100% 冲刺）→ A5 C2 收口 | B5 美化（可选） | S3 多浏览器实测 |
