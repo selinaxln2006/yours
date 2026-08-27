@@ -31,6 +31,7 @@ import { createMemoryTools } from '../tools/memory-tools.ts';
 import { createArtifactTools } from '../tools/artifact-tools.ts';
 import { createPkgTools } from '../tools/pkg-tools.ts';
 import { createWebTools } from '../tools/web-tools.ts';
+import { SupabaseAuth, AuthError } from './auth.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PAA_ROOT = path.resolve(__dirname, '..');
@@ -123,7 +124,41 @@ async function loadLlmConfig(): Promise<LLMConfig | null> {
   return null;
 }
 
-// ---- WS 连接管理与确认卡 ----
+interface SupabaseConfig {
+  url: string;
+  publishableKey: string;
+}
+
+async function loadSupabaseConfig(): Promise<SupabaseConfig | null> {
+  try {
+    const raw = JSON.parse(await readFile(path.join(PAA_ROOT, 'config.json'), 'utf8')) as {
+      supabase?: { url?: string; publishableKey?: string };
+    };
+    const url = raw.supabase?.url;
+    const publishableKey = raw.supabase?.publishableKey;
+    if (url && publishableKey) return { url, publishableKey };
+  } catch {
+    // 无配置
+  }
+  return null;
+}
+
+/** 从 Cookie 头解析指定 cookie（无则返回 null） */
+function getCookie(req: IncomingMessage, name: string): string | null {
+  const raw = req.headers.cookie;
+  if (!raw) return null;
+  for (const part of raw.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq < 0) continue;
+    const k = part.slice(0, eq).trim();
+    const v = part.slice(eq + 1).trim();
+    if (k === name && v) return decodeURIComponent(v);
+  }
+  return null;
+}
+
+const SESSION_COOKIE = 'paa_session';
+const SESSION_COOKIE_MAX_AGE = 30 * 24 * 3600; // 30 天
 const connections = new Set<WsConnection>();
 interface PendingConfirm {
   resolve: (ok: boolean) => void;
@@ -266,6 +301,19 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // ---- S1：Supabase Auth（GitHub OAuth，PKCE）----
+  const supabaseConfig = await loadSupabaseConfig();
+  const auth = supabaseConfig
+    ? new SupabaseAuth({
+        projectUrl: supabaseConfig.url,
+        publishableKey: supabaseConfig.publishableKey,
+        callbackUrl: `http://${HOST}:${PORT}/api/auth/callback`,
+        sessionDir: path.join(PAA_ROOT, 'data', 'auth', 'sessions'),
+        userDir: path.join(PAA_ROOT, 'data', 'auth', 'users'),
+      })
+    : null;
+  await auth?.init();
+
   // 数据层
   const lifeStore = new LifeStore(path.join(PAA_ROOT, 'data', 'life'));
   await lifeStore.init();
@@ -355,7 +403,100 @@ async function main(): Promise<void> {
           pkgs: loadedPkgs.map((lp) => `${lp.manifest.name}@${lp.manifest.version}`),
           memory: (await memory.list()).length,
           sessionId: serverSessionId,
+          auth: auth ? 'ready' : 'disabled',
         });
+        return;
+      }
+
+      // ---- REST：Auth（S1 GitHub OAuth，Supabase 托管）----
+      // 登录：302 → Supabase authorize（PKCE）
+      if (p === '/api/auth/login' && req.method === 'GET') {
+        if (!auth) {
+          sendJson(res, 503, { error: '未配置 supabase（paa/config.json 缺 supabase 字段）' });
+          return;
+        }
+        res.writeHead(302, { Location: auth.buildLoginUrl() });
+        res.end();
+        return;
+      }
+      // 回调：code + state → 换 token → 落盘 → 种 cookie → 回首页
+      if (p === '/api/auth/callback' && req.method === 'GET') {
+        if (!auth) {
+          sendJson(res, 503, { error: '未配置 supabase' });
+          return;
+        }
+        const code = url.searchParams.get('code') ?? '';
+        const state = url.searchParams.get('state') ?? '';
+        if (!code || !state) {
+          sendJson(res, 400, { error: '缺少 code/state 参数' });
+          return;
+        }
+        try {
+          const session = await auth.exchangeCode(code, state);
+          await auth.save(session);
+          console.log(`[auth] 登录成功: ${session.user.name} (${session.user.id})`);
+          broadcast({ type: 'auth', event: 'login', user: session.user });
+          res.writeHead(302, {
+            Location: '/',
+            'Set-Cookie': `${SESSION_COOKIE}=${session.sid}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_COOKIE_MAX_AGE}`,
+          });
+          res.end();
+        } catch (e) {
+          const status = e instanceof AuthError ? e.status : 500;
+          console.error(`[auth] 登录失败: ${e instanceof Error ? e.message : e}`);
+          res.writeHead(status, { 'Content-Type': 'text/html; charset=utf-8' });
+          res.end(
+            `<html><body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><div style="text-align:center"><h2>登录失败</h2><p>${(e instanceof Error ? e.message : String(e)).replace(/[<>&]/g, '')}</p><a href="/">返回</a></div></body></html>`,
+          );
+        }
+        return;
+      }
+      // 当前用户：读 cookie → 会话文件 → （必要时 refresh）→ 用户信息
+      if (p === '/api/auth/me' && req.method === 'GET') {
+        if (!auth) {
+          sendJson(res, 503, { error: '未配置 supabase' });
+          return;
+        }
+        const sid = getCookie(req, SESSION_COOKIE);
+        if (!sid) {
+          sendJson(res, 401, { error: '未登录' });
+          return;
+        }
+        let session = await auth.get(sid);
+        if (!session) {
+          sendJson(res, 401, { error: '会话不存在或已失效，请重新登录' });
+          return;
+        }
+        const refreshed = await auth.refreshIfNeeded(session);
+        if (refreshed) {
+          session = refreshed;
+          console.log(`[auth] 已刷新 token: ${session.user.name}`);
+        }
+        const rec = await auth.getUserRec(session.user.id);
+        sendJson(res, 200, {
+          ok: true,
+          user: session.user,
+          firstSeen: rec?.firstSeen ?? session.createdAt,
+          lastSeen: rec?.lastSeen ?? session.createdAt,
+          logins: rec?.logins ?? 1,
+          tokenExpiresAt: session.expiresAt,
+        });
+        return;
+      }
+      // 登出：删会话文件 + 清 cookie
+      if (p === '/api/auth/logout' && req.method === 'POST') {
+        if (auth) {
+          const sid = getCookie(req, SESSION_COOKIE);
+          if (sid) {
+            await auth.remove(sid);
+            console.log('[auth] 登出');
+          }
+        }
+        res.writeHead(200, {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Set-Cookie': `${SESSION_COOKIE}=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`,
+        });
+        res.end('{"ok":true}');
         return;
       }
 

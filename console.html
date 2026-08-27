@@ -427,6 +427,7 @@ main{display:flex;min-height:0}
       <span class="badge off" id="wsBadge"><span class="dot"></span><span id="wsTxt">连接中</span></span>
       <span class="badge" id="lvBadge">LV <span class="lv">-</span></span>
       <span class="badge" id="toolBadge" title="已注册工具">工具 <span class="lv">-</span></span>
+      <span class="badge off" id="authBadge" title="GitHub 登录（云端同步）" style="cursor:pointer">登录</span>
     </div>
   </header>
   <main>
@@ -546,6 +547,35 @@ function tickClock(){
   const n = new Date();
   $('#clkTime').textContent = fmtTime(n);
   $('#clkDate').textContent = n.getFullYear()+'.'+String(n.getMonth()+1).padStart(2,'0')+'.'+String(n.getDate()).padStart(2,'0');
+}
+
+/* ---------- S1 登录态：/api/auth/me → 徽标（点击登出/去登录） ---------- */
+async function checkAuth(){
+  const el = $('#authBadge');
+  try {
+    const res = await fetch('/api/auth/me', { headers: { 'Accept': 'application/json' } });
+    if (res.ok) {
+      const d = await res.json();
+      const u = d.user || {};
+      S.user = u;
+      el.className = 'badge on';
+      el.innerHTML = '👤 ' + esc(u.name || u.id || 'user');
+      el.title = (u.email || '') + ' · 第 ' + (d.logins || 1) + ' 次登录 · 点击登出';
+      el.onclick = async () => {
+        if (!confirm('登出当前账号（' + (u.name || u.id) + '）？')) return;
+        try { await fetch('/api/auth/logout', { method: 'POST' }); } catch { /* 忽略 */ }
+        location.reload();
+      };
+    } else {
+      el.className = 'badge off';
+      el.innerHTML = '登录';
+      el.title = 'GitHub 登录（云端同步）';
+      el.onclick = () => { location.href = '/api/auth/login'; };
+    }
+  } catch {
+    el.className = 'badge off';
+    el.textContent = '登录';
+  }
 }
 
 /* ---------- 消息流（工具卡 + 日志行） ---------- */
@@ -2039,6 +2069,7 @@ function init(){
   renderPanel();          // 先渲染面板骨架，不依赖首拉成功
   fetchData();
   connect();
+  checkAuth();            // S1：登录态徽标
 }
 init();
 </script>
