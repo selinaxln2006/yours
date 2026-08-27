@@ -16,6 +16,7 @@ import type { ToolPipeline } from './tool-pipeline.ts';
 import type { LLMAdapter } from './llm-adapter.ts';
 import { supportsStreaming } from './llm-adapter.ts';
 import type { SessionMgr } from './session-mgr.ts';
+import { Compactor } from './compactor.ts';
 
 export interface AgentLoopDeps {
   adapter: LLMAdapter;
@@ -26,6 +27,11 @@ export interface AgentLoopDeps {
   memoryProvider?: MemoryProvider | null;
   /** 每轮 LLM 往返上限，默认 12 */
   maxRounds?: number;
+  /**
+   * 上下文压缩器（A2 Compaction）。
+   * undefined = 默认启用（用 adapter 自动创建）；null = 显式禁用；实例 = 自定义配置
+   */
+  compactor?: Compactor | null;
 }
 
 export interface AgentLoopCtx {
@@ -73,12 +79,15 @@ export class AgentLoop {
   private injectQueue: SessionEvent[] = [];
   private readonly maxRounds: number;
   private readonly memoryProvider: MemoryProvider | null;
+  private readonly compactor: Compactor | null;
   private deps: AgentLoopDeps;
 
   constructor(deps: AgentLoopDeps) {
     this.deps = deps;
     this.maxRounds = deps.maxRounds ?? 12;
     this.memoryProvider = deps.memoryProvider ?? null;
+    // A2：默认启用 Compaction（undefined → 自动创建；null → 显式禁用；实例 → 自定义）
+    this.compactor = deps.compactor !== undefined ? deps.compactor : new Compactor(deps.adapter);
   }
 
   /** 中断当前 run（下一轮检查点生效） */
@@ -123,7 +132,7 @@ export class AgentLoop {
     await this.deps.session.append(ctx.sessionId, events[events.length - 1]);
 
     const sys = await this.buildSystemPrompt(userText);
-    const messages: ChatMessage[] = [{ role: 'system', content: sys }];
+    let messages: ChatMessage[] = [{ role: 'system', content: sys }];
 
     // console-v1：注入跨 run 对话历史（不含 system）
     if (opts?.prior?.length) {
@@ -149,6 +158,23 @@ export class AgentLoop {
 
     while (rounds < this.maxRounds && !this.abortFlag) {
       rounds++;
+      // A2 Compaction：LLM 调用前检查上下文预算，超阈值 → 早期轮压缩为摘要
+      // （原文已在 events.jsonl 全量落盘，压缩仅影响注入上下文，可回放/审计）
+      if (this.compactor) {
+        const compacted = await this.compactor.maybeCompact(messages);
+        if (compacted.stats.triggered) {
+          messages = compacted.messages;
+          const ev: SessionEvent = {
+            ts: Date.now(),
+            type: 'system',
+            payload: {
+              text: `[compaction] 上下文 ${compacted.stats.totalChars}→${compacted.stats.afterChars} 字符，早期 ${compacted.stats.compactedRounds} 轮已压缩为摘要（原文在 events.jsonl）`,
+            },
+          };
+          emit(ev);
+          await this.deps.session.append(ctx.sessionId, ev);
+        }
+      }
       const toolDefs = this.deps.pipeline.list();
       let assistant: ChatMessage;
       // 流式优先（v1.1）：适配器支持则逐块回调 onDelta，前端打字机

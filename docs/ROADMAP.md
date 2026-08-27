@@ -156,6 +156,27 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 
 **下一步**：A2 Compaction（上下文预算 + 摘要替换，50+ 轮不爆）→ A3 断点续跑。S 线：S2 云同步（18 键增量 + 会话游标）。
 
+### A2 Compaction 完成（S5 尾，2026-08-27，commit 待定）
+
+**实现**：新 `core/compactor.ts`（210 行）+ 挂载 `agent-loop.ts` 消息组装点（每轮 LLM 调用前检查预算）。
+
+| 设计点 | 决策 | 理由 |
+|--------|------|------|
+| 预算 | 默认 60k 字符（可配 `budgetChars`） | 超阈值才触发，短任务零开销（真实实测确认不误伤） |
+| 轮次边界 | assistant + 后续连续 tool；user 指令永不压缩 | prior 交错场景实测（轮间夹 user 消息保留） |
+| 尾部保留 | 最新 minTailRounds=4 轮不压缩 | agent 需要近期上下文 |
+| 摘要消息 | role:'user' + `[早期上下文摘要]` 标记 | 不碰 system 首位约束，跨 API 兼容；二次压缩自动识别已有摘要 |
+| 预算循环 | 一批不够继续压（≤3 pass/轮） | 缩到预算内为止 |
+| 降级 | 摘要 LLM 失败 → 原样返回，只 warn | 宁可爆上下文不破坏执行链 |
+| 原文保留 | events.jsonl 逐轮全存（session.append 既有） | 摘要仅影响注入，可回放/审计；compaction 事件本身也入溯源 |
+
+**验证（三层）**：
+- 单测 6 用例（`test/compactor.test.ts`）：未超不触发/摘要替换/user 保留/轮间 user/摘要累积/失败降级
+- 集成（`scripts/smoke-compaction.ts`）：真实 AgentLoop + mock 30 轮 fs_read（每轮 8k）→ **31 轮收敛，14 次压缩，消息量 240k→17k（压 93%）**，事件流 14 条 `[compaction]` 记录
+- 真实 API：`--goal` 短任务 3/3 done（默认预算不触发，无回归）；全量测试 57/57
+
+**启用方式**：AgentLoop 默认自动创建 Compactor（deps.compactor undefined=启用 / null=禁用 / 实例=自定义）。planner 子任务、console chat、CLI 全部自动继承，宿主零改动。
+
 ---
 
 ## 四、G8 第一靶子（候选，待俪宁选）
@@ -180,7 +201,7 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 |------|------|--------|
 | A0 | 靶子任务定稿 + run 基线录制（当前 agent 跑 T1 的失败/卡点录像） | 卡点清单 |
 | A1 | **Task Decomposition**（planner 层）+ 任务树落盘 | 能拆 + 能按序执行 |
-| A2 | **Compaction**（上下文预算 + 摘要替换） | 50+ 轮不爆 |
+| A2 | **Compaction**（上下文预算 + 摘要替换） | ✅ **完成**（2026-08-27，50+ 轮不爆实测通过，§三） |
 | A3 | **断点续跑**（resume API + CLI flag） | 杀进程重启接着干 |
 | A4 | **re-plan 自检** + 并行工具 | 中途失败不自爆 |
 | A5 | **C2 自我更新**收口 | G8 实测通过 |
@@ -271,7 +292,7 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 | **S2** | ✅ **K1 修复**（maxTokens 8192 + 分段写纪律）→ ✅ **A1 planner 实现**（`core/planner.ts`，`--goal` 模式，三次实测 100% 完成率，新卡点 K5 已闭环，commit `2d0117b`） | B2 会话管理 API（agent 种子已就位，人类补齐 server 端） | **S1 OAuth 登录**（server 登录端点 + 前端按钮 + user_id 落盘） |
 | **S3** | ✅ **T1 二次实测**（暴露 K6 假阳性：5/5 标 done 实际 1/5，三根因已修复）→ A2 Compaction 顺延至 T1 重跑后 | B2 前端会话管理器 UI（T1 假 done，待重跑） | ✅ 教程已交付（docs/SUPABASE-SETUP.md）；✅ **俪宁已注册给 key（已验证有效）** |
 | **S4** | ✅ **T1 三次实测**（K6 验证通过：假 done 5/5→≤1/跑；第三跑产出保留：server 会话 API + sessions-client.ts + 类型债 13→7；新卡点 K7 四根因）→ **K7 修复**（verify 时序/语义 + 拆解锚定 console.html + Windows 提示） | B2 console.html 前端 UI 收口（T1 唯一缺口） | **S1 OAuth 联调**（俪宁 dashboard 配置中 → server 登录端点 + 前端按钮 + user_id 落盘） |
-| **S5** | A3 断点续跑（任务树落盘+resume）→ A4 re-plan | B3 index 退役 | S2 收尾 + S3 Realtime |
+| **S5** | ✅ **A2 Compaction 完成**（2026-08-27：compactor.ts + agent-loop 挂载，单测 6 用例 + 集成 31 轮压 93% + 真实 API 回归 3/3）→ **A3 断点续跑**（任务树落盘+resume）→ A4 re-plan | B3 index 退役 | S2 收尾 + S3 Realtime |
 | **S5** | T1 三次实测（完成率 → 100% 冲刺）→ A5 C2 收口 | B5 美化（可选） | S3 多浏览器实测 |
 | **S6** | **G8 验收**：T1 全流程 0 插手完成 = 绿灯 | — | 全端打通验收 |
 | **S7（Phase C 起）** | 多 agent 协作：reviewer 只读配置 → 评审→修改闭环 → C2 交易 Agent | D0 profile 设计（与 S 线打通） | 云端身份 → 多用户 profile 映射 |
