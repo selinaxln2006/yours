@@ -771,7 +771,7 @@ async function main(): Promise<void> {
           sendJson(res, 400, { error: 'message 必填' });
           return;
         }
-        const chatSession = getChatSession(body.sessionId);
+        const chatSession = await getChatSession(body.sessionId);
         const ctx = {
           sessionId: serverSessionId,
           cwd: WORKSPACE_ROOT,
