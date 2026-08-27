@@ -1,8 +1,9 @@
 # C4 Memory + Autonomy 分级 — 设计文档
 
-> 对应 G6（记忆主权）与建议书第九章（Agent Autonomy）。
-> 状态：v2（融入调研报告 11 条修订），实施中。前置：fs-tools v0.2（已落地）。
-> v2 修订来源：`memory-landscape-research.md`（Letta/Mem0/Zep 三流派 + Claude Code 文件派 + TencentDB/Codebase-Memory 两范例）
+> **状态**：v2（融入调研报告 11 条修订），实施中
+> **前置**：fs-tools v0.2（已落地）
+> **关联文档**：`memory-landscape-research.md`（Letta/Mem0/Zep 三流派 + Claude Code 文件派 + TencentDB/Codebase-Memory 两范例）
+> 对应：G6（记忆主权）与建议书第九章（Agent Autonomy）
 
 ---
 
@@ -52,7 +53,7 @@ MEMORY.md 索引（温）──30天──> 归档或删除（冷）
 2. **绝对日期**：禁止相对日期（"下周二"→ "2026-08-26"）。
 3. **不可推导**：代码能 grep 到的不存；只存偏好、决策背景、方法论、外部链接。
 
-### 1.3 五类记忆的落地映射
+### 1.4 五类记忆的落地映射
 
 | 建议书第八章类型 | 落地文件 | 读写时机 |
 |---|---|---|
@@ -62,7 +63,7 @@ MEMORY.md 索引（温）──30天──> 归档或删除（冷）
 | Procedural（agent 知道怎么做） | `playbook.md`（方法论，不是代码位置）[v2] | 沉淀新方法论时写入；终极形态 = MCP 外接代码图谱 |
 | Working Memory（当前任务上下文） | AgentLoop 进程内上下文 | 会话内天然存在，不落盘 |
 
-### 1.4 机制
+### 1.5 机制
 
 **注入（启动时）**
 
@@ -104,7 +105,7 @@ system prompt 六步纪律追加第七步：
 | `memory__append` | 追加当日日志 | low | auto（L1+） |
 | `memory__update` | 修改 MEMORY.md / goals.md | medium | L2+ auto / L1 confirm |
 
-### 1.5 为什么 v1 不做 embedding
+### 1.6 为什么 v1 不做 embedding
 
 1. 个人项目记忆体量（百条级）grep 检索完全够用；
 2. 零依赖是 PAA 的架构优势，能不加就不加；
