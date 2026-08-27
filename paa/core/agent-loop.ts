@@ -11,6 +11,8 @@ import type {
   LoopResult,
   MemoryProvider,
   SessionEvent,
+  ToolCall,
+  ToolResult,
 } from './types.ts';
 import type { ToolPipeline } from './tool-pipeline.ts';
 import type { LLMAdapter } from './llm-adapter.ts';
@@ -217,8 +219,16 @@ export class AgentLoop {
       }
 
       // 执行工具调用（Step 层）
-      for (const call of assistant.toolCalls) {
-        if (this.abortFlag) break;
+      // 【⑤ 并行工具】同轮多个 toolCalls 隐含"无依赖声明"（有依赖 LLM 不会同一轮发）→ 并行执行：
+      //   · 权限非 ask（allow/deny）的调用走 Promise.all，多读/多写同轮并发，长任务才有时效性
+      //   · 权限 ask 的调用保持串行（避免并发弹多个确认框）
+      //   · 结果仍按原 call.id 顺序注入 messages/events——消息顺序稳定、审计可读不变
+      //   · pipeline.run 内部 try/catch 返回 {ok,error}（不 throw）→ 单个失败天然隔离，不影响同批其他调用
+      const calls = assistant.toolCalls;
+      const parallelCalls = calls.filter((c) => this.deps.pipeline.mode(c.name) !== 'ask');
+      const serialCalls = calls.filter((c) => this.deps.pipeline.mode(c.name) === 'ask');
+
+      const runOne = async (call: ToolCall): Promise<{ call: ToolCall; result: ToolResult }> => {
         toolCalls++;
         const result = await this.deps.pipeline.run(call, ctx);
         if (result.ok) toolOkCount++;
@@ -226,6 +236,22 @@ export class AgentLoop {
           toolFailCount++;
           toolFailures.push(`${call.name}: ${String(result.error).slice(0, 120)}`);
         }
+        return { call, result };
+      };
+
+      const done: Array<{ call: ToolCall; result: ToolResult }> = [];
+      if (parallelCalls.length && !this.abortFlag) {
+        done.push(...(await Promise.all(parallelCalls.map((c) => runOne(c)))));
+      }
+      for (const c of serialCalls) {
+        if (this.abortFlag) break;
+        done.push(await runOne(c));
+      }
+
+      // 按原调用顺序注入（并行结果映射回 call.id 顺序）
+      const byId = new Map(done.map((r) => [r.call.id, r.result]));
+      for (const call of calls) {
+        const result = byId.get(call.id) ?? { ok: false, error: '并行执行未返回结果（已中断？）' };
         messages.push({
           role: 'tool',
           toolCallId: call.id,

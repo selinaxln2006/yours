@@ -40,6 +40,13 @@ export class ToolPipeline {
     return [...this.registry.values()];
   }
 
+  /** 查询工具权限模式（⑤ 并行：'ask' 类不参与并行，避免并发弹确认框；未知工具视为 deny） */
+  mode(name: string): 'allow' | 'ask' | 'deny' {
+    const tool = this.registry.get(name);
+    if (!tool) return 'deny';
+    return this.permission.check(tool);
+  }
+
   /** 执行一次工具调用：权限门 → 执行 → 审计 */
   async run(call: ToolCall, ctx: ExecContext): Promise<ToolResult> {
     const tool = this.registry.get(call.name);

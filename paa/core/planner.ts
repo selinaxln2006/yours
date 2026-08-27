@@ -9,7 +9,7 @@
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { ChatMessage, MemoryProvider, SessionEvent } from './types.ts';
+import type { ChatMessage, LoopResult, MemoryProvider, SessionEvent } from './types.ts';
 import type { LLMAdapter } from './llm-adapter.ts';
 import type { ToolPipeline } from './tool-pipeline.ts';
 import type { SessionMgr } from './session-mgr.ts';
@@ -44,6 +44,9 @@ export interface PlannerOptions {
   planMaxTokens?: number;
   /** 任务树生命周期内最多 re-plan 次数（默认 2；0 = 失败即止，不自动调整） */
   maxReplans?: number;
+  /** 【⑤ 并行工具】子任务并发数（每轮最多同时执行的"依赖就绪"子任务数）。
+   *  默认 1 = 顺序执行（现状不变）；>1 时要求就绪子任务互不写同一文件（共享产出有冲突风险，逐步放开）。 */
+  subtaskConcurrency?: number;
 }
 
 export interface PlannerDeps {
@@ -265,6 +268,8 @@ export class Planner {
   private deps: PlannerDeps;
   private opts: Required<PlannerOptions>;
 
+  private saveChain: Promise<void> = Promise.resolve();
+
   constructor(deps: PlannerDeps) {
     this.deps = deps;
     this.opts = {
@@ -272,6 +277,7 @@ export class Planner {
       subtaskRounds: deps.options?.subtaskRounds ?? 8,
       planMaxTokens: deps.options?.planMaxTokens ?? 2048,
       maxReplans: deps.options?.maxReplans ?? 2,
+      subtaskConcurrency: deps.options?.subtaskConcurrency ?? 1,
     };
   }
 
@@ -290,12 +296,17 @@ export class Planner {
     return tree;
   }
 
-  /** 任务树落盘（断点续跑的状态文件） */
+  /** 任务树落盘（断点续跑的状态文件）
+   *  【⑤ 并行】经 saveChain 串行写队列——多个子任务并发完成时各自调 saveTree，
+   *  直接 writeFile 同文件会交错损坏；排队后每次写的是调用时快照，最后一次 = 最新状态 */
   private async saveTree(tree: TaskTree, ctx: AgentLoopCtx): Promise<void> {
     const dir = this.deps.session.sessionDir(ctx.sessionId);
     await mkdir(dir, { recursive: true });
     tree.updatedAt = Date.now();
-    await writeFile(path.join(dir, 'task-tree.json'), JSON.stringify(tree, null, 2), 'utf8');
+    const content = JSON.stringify(tree, null, 2);
+    const p = this.saveChain.then(() => writeFile(path.join(dir, 'task-tree.json'), content, 'utf8'));
+    this.saveChain = p.catch(() => {}); // 防队列断裂：单个写失败不阻塞后续
+    await p;
   }
 
   /** 加载已落盘任务树（A3 断点续跑入口；不存在/损坏返回 null） */
@@ -347,177 +358,57 @@ export class Planner {
     let doneCount = tree.tasks.filter((t) => t.status === 'done').length;
     let replanCount = 0;
 
-    // 【A4 re-plan 自愈】主循环：每轮执行"依赖全 done 的 pending"；
-    // 轮末有 failed 且未超 replan 上限 → LLM 重规划未完成部分（增删改）→ 下一轮继续
+    // 【A4 re-plan 自愈 + ⑤ 并行】主循环：每轮执行"依赖全 done 的 pending"，
+    // 最多 subtaskConcurrency 个并行；无就绪任务且存在 failed → LLM 重规划未完成部分（增删改）→ 下一轮继续
     mainLoop: for (;;) {
       const order = topoSort(tree.tasks);
 
+      // ① 已完成子任务：填充 outcomes（A3 续跑保留原结果与产出 note，供后续子任务引用）
       for (const task of order) {
-        // 【A3 断点续跑】跳过已完成子任务：保留原结果与产出 note（供后续子任务引用）
-        if (task.status === 'done') {
-          if (!outcomes[task.id]) {
-            outcomes[task.id] = {
-              status: 'done',
-              rounds: task.rounds ?? 0,
-              toolCalls: task.toolCalls ?? 0,
-              note: task.note,
-            };
-          }
-          continue;
+        if (task.status === 'done' && !outcomes[task.id]) {
+          outcomes[task.id] = {
+            status: 'done',
+            rounds: task.rounds ?? 0,
+            toolCalls: task.toolCalls ?? 0,
+            note: task.note,
+          };
         }
-        // 失败任务：本轮不执行，留给轮末 replan 决策（增删改）
-        if (task.status === 'failed') continue;
-        if (task.status !== 'pending') continue;
-        // 依赖链检查：任一依赖未 done（failed/挂起）→ 本轮挂起，交给 replan
+      }
+
+      // ② 选就绪任务：依赖全 done 的 pending，最多 subtaskConcurrency 个（⑤ 并行：同批并行执行）
+      const ready: TaskNode[] = [];
+      for (const task of order) {
+        if (task.status !== 'pending') continue; // failed 留给轮末 replan；running 本轮不重复
         const depAllDone = task.deps.every((d) => {
           const dep = tree.tasks.find((t) => t.id === d);
           return dep?.status === 'done';
         });
-        if (!depAllDone) continue;
-
-        task.status = 'running';
-        await this.saveTree(tree, ctx);
-
-      const subLoop = new AgentLoop({
-        adapter: this.deps.adapter,
-        pipeline: this.deps.pipeline,
-        session: this.deps.session,
-        systemPrompt: this.deps.baseSystemPrompt + '\n\n' + taskContextBlock(tree, task) + UNATTENDED_RULE,
-        memoryProvider: this.deps.memoryProvider,
-        maxRounds: this.opts.subtaskRounds,
-      });
-
-      let res;
-      let attempts = 0;
-      for (;;) {
-        attempts++;
-        try {
-          res = await subLoop.run(`子任务 ${task.id}：${task.desc}`, ctx, {
-            onEvent: (ev) => this.deps.onEvent?.(task.id, ev),
-          });
-          break;
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          // 瞬断（undici terminated / fetch failed / ECONNRESET / timeout）→ 重试 1 次
-          const transient = /terminated|fetch failed|ECONNRESET|socket|timed ?out|timeout/i.test(msg);
-          if (attempts < 2 && transient) continue;
-          task.status = 'failed';
-          task.note = msg.slice(0, 200);
-          outcomes[task.id] = { status: 'failed', rounds: 0, toolCalls: 0, note: task.note };
-          await this.saveTree(tree, ctx);
-          continue;
-        }
+        if (!depAllDone) continue; // 依赖未就绪（含依赖 failed）→ 本轮挂起，交给 replan 决策
+        ready.push(task);
+        if (ready.length >= this.opts.subtaskConcurrency) break;
       }
 
-      task.rounds = res.rounds;
-      task.toolCalls = res.toolCalls;
-
-      // 失败判定：中断 / 工具失败率 > 30% / 写类工具成败 / 无产出反问 / verify 分层（K6 + K7）
-      const toolEvents = res.events.filter((ev) => ev.type === 'tool') as Array<{
-        payload: { name?: string; result?: { ok?: boolean }; arguments?: unknown };
-      }>;
-      const fails = toolEvents.filter((ev) => ev.payload?.result?.ok === false).length;
-      const failRate = toolEvents.length ? fails / toolEvents.length : 0;
-      const note = res.answer?.slice(0, 400) ?? '';
-      // K6：写类工具（fs_write/fs_append/fs_patch）单独统计成败——T1 实测暴露：
-      // 写操作全失败但总失败率 < 30% 时会被误判 done（假阳性）
-      let writeOk = 0;
-      let writeFail = 0;
-      let lastWriteIdx = -1;
-      toolEvents.forEach((ev, idx) => {
-        const n = ev.payload?.name;
-        if (n === 'fs_write' || n === 'fs_append' || n === 'fs_patch') {
-          if (ev.payload?.result?.ok === false) writeFail++;
-          else {
-            writeOk++;
-            lastWriteIdx = idx;
-          }
-        }
-      });
-      // 【K7-①/②】verify 分层判定（最后一次成功写之后的验证动作）：
-      // - strong = 语义验证（fs_grep 搜引用点 / shell 跑 node --check|--test|npm test）
-      // - weak = 仅 fs_read 读回（读回自己刚写的内容 ≠ 功能完成）
-      // - none = 无任何验证
-      // 写失败（writeFailed）→ 真失败（K6 保留）；写了但未自验 → 降级 warning 仍判 done——
-      // 误杀真实产出（写了 5-6 次完整代码仅因轮次耗尽没自验）代价 > 放过半成品；
-      // 半成品由任务树中"全局验证"子任务（如 t5 全链路验证）兜底抓出
-      const afterWrites = lastWriteIdx >= 0 ? toolEvents.slice(lastWriteIdx + 1) : [];
-      const verifyStrong = afterWrites.some((ev) => {
-        const n = ev.payload?.name;
-        if (n === 'fs_grep') return true;
-        if (n === 'shell_run') {
-          const args = ev.payload?.arguments as { command?: string; cmd?: string } | undefined;
-          const cmd = String(args?.command ?? args?.cmd ?? '');
-          return /node .*--check|node .*--test|npm test|npm run check/i.test(cmd);
-        }
-        return false;
-      });
-      const verifyWeak = afterWrites.some((ev) => ev.payload?.name === 'fs_read');
-      const verifyLevel = verifyStrong ? 'strong' : verifyWeak ? 'weak' : 'none';
-      const writeFailed = (writeFail > 0 && writeOk === 0) || writeFail > writeOk;
-      const wrote = writeOk > 0 || res.events.some((ev) => {
-        if (ev.type !== 'tool') return false;
-        const p = ev.payload as { name?: string };
-        return p.name === 'artifact_create' || p.name === 'memory_save';
-      });
-      const clarify = /(请确认|你选一个|我需要澄清|无法确定|需要你来决定)/.test(note);
-      const noOutput = !wrote && clarify && res.rounds <= 4;
-      // 【K8 v3】空转假阳性：实现类子任务（desc 含实现关键词）零写操作且无"功能已就位"证据 → failed
-      // （t4 型：全程只读探索后轮次耗尽零产出；核对确认型例外：功能本已存在，note 含"已满足/已完整实现"等证据）
-      // v2 修正（第五跑 3 误杀）：证据词扩充 + 验证类豁免 + 去"创建"
-      // v3 修正（第六跑 t4 逃逸）：VERIFY 豁免只查 desc 不查 verify——"fs_grep 确认 XXX 存在"是实现类
-      // 任务的验收措辞（verify），不是验证类任务特征；验证类任务的标志在 desc（"验证/走通/回归"是动作）
-      const IMPL_RE = /(修改|新增|实现|写入|生成|添加|增加|落地|改造|接入|挂载|编写)/;
-      const DONE_EVIDENCE_RE =
-        /(已完成|已存在|已实现|已经完成|已由|前序|已落地|已经具备|已有|已对接|已满足|无需改动|无需修改|已完整|已齐全|已就绪|已经接入)/;
-      const VERIFY_TASK_RE = /(验证|测试|检查|走通|回归|核实|复核|审查)/;
-      const idleFakeDone =
-        !VERIFY_TASK_RE.test(task.desc) &&
-        (IMPL_RE.test(task.desc) || IMPL_RE.test(task.verify)) &&
-        writeOk === 0 &&
-        writeFail === 0 &&
-        !DONE_EVIDENCE_RE.test(note);
-
-      if (res.aborted || failRate > 0.3 || writeFailed || noOutput || idleFakeDone) {
-        const why = res.aborted
-          ? '被中断'
-          : writeFailed
-            ? `写类工具失败(${writeFail}次)≥成功(${writeOk}次)，代码未落地`
-            : idleFakeDone
-              ? '实现类子任务零写操作且无"功能已就位"证据（空转假阳性，只读不写=未完成）'
-              : failRate > 0.3
-                ? `工具失败率过高(${(failRate * 100).toFixed(0)}%)`
-                : '无产出反问（违反无人值守纪律）';
-        task.status = 'failed';
-        task.note = `${why} | ${note}`.slice(0, 300);
-        outcomes[task.id] = { status: 'failed', rounds: res.rounds, toolCalls: res.toolCalls, note: task.note };
-        await this.saveTree(tree, ctx);
-        // aborted = 外部中断（用户/宿主叫停）→ replan 无意义，终止整个 run
-        if (res.aborted) break mainLoop;
-      } else {
-        task.status = 'done';
-        const verifyWarn =
-          writeOk > 0 && verifyLevel === 'none'
-            ? `⚠️ 写了 ${writeOk} 次但无任何读回/grep 验证（降级 warning，由全局验证子任务兜底）| `
-            : writeOk > 0 && verifyLevel === 'weak'
-              ? `⚠️ 仅读回未做语义验证（应 grep 引用点/跑最小检查）| `
-              : '';
-        task.note = (verifyWarn + note).slice(0, 300);
-        outcomes[task.id] = { status: 'done', rounds: res.rounds, toolCalls: res.toolCalls, note: task.note };
-        doneCount++;
-        await this.saveTree(tree, ctx);
+      // ③ 无就绪任务 → 轮末自愈判定：无 failed / 无 pending → 收敛；超上限或 replan 无效 → 放弃（failed 保留）
+      if (ready.length === 0) {
+        const failedTasks = tree.tasks.filter((t) => t.status === 'failed');
+        const hasPending = tree.tasks.some((t) => t.status === 'pending');
+        if (failedTasks.length === 0 || !hasPending) break;
+        if (replanCount >= this.opts.maxReplans) break;
+        const replanOk = await this.replan(tree, ctx);
+        if (!replanOk) break;
+        replanCount++;
+        continue; // 重规划后重新选就绪任务
       }
+
+      // ④ 标 running → 落盘 → 并行执行（⑤：多个就绪子任务同时跑，各自独立 AgentLoop；
+      //    task-tree.json 经 saveChain 串行写，并发完成不交错损坏）
+      for (const task of ready) task.status = 'running';
+      await this.saveTree(tree, ctx);
+      const results = await Promise.all(ready.map((task) => this.runSubtask(task, tree, ctx, outcomes)));
+      doneCount += results.filter((r) => r.done).length;
+      // aborted = 外部中断（用户/宿主叫停）→ replan 无意义，终止整个 run
+      if (results.some((r) => r.aborted)) break mainLoop;
     }
-
-    // 轮末自愈判定：无 failed / 无 pending → 收敛；超上限或 replan 无效 → 放弃（failed 保留）
-    const failedTasks = tree.tasks.filter((t) => t.status === 'failed');
-    const hasPending = tree.tasks.some((t) => t.status === 'pending');
-    if (failedTasks.length === 0 || !hasPending) break;
-    if (replanCount >= this.opts.maxReplans) break;
-    const replanOk = await this.replan(tree, ctx);
-    if (!replanOk) break;
-    replanCount++;
-  }
 
     const summary = [
       `✅ 目标执行完成：${doneCount}/${tree.tasks.length} 个子任务成功${resumeTree ? '（🔄 断点续跑）' : ''}${replanCount > 0 ? `（re-plan ${replanCount} 次自愈）` : ''}`,
@@ -527,6 +418,146 @@ export class Planner {
     ].join('\n');
 
     return { tree, outcomes, doneCount, totalCount: tree.tasks.length, summary };
+  }
+
+  /** 【⑤ 并行】执行单个子任务（多个就绪任务可同时调用；方法内只修改 task 自身字段与共享 tree 中该任务条目）
+   *  返回 { done, aborted }：done = 子任务成功；aborted = 外部中断（调用方终止整个 run）
+   *  A4 语义：进程内失败返回 done=false，由主循环轮末 replan 决策；瞬时网络错误自动重试 1 次 */
+  private async runSubtask(
+    task: TaskNode,
+    tree: TaskTree,
+    ctx: AgentLoopCtx,
+    outcomes: Record<string, TaskOutcome>,
+  ): Promise<{ done: boolean; aborted: boolean }> {
+    const subLoop = new AgentLoop({
+      adapter: this.deps.adapter,
+      pipeline: this.deps.pipeline,
+      session: this.deps.session,
+      systemPrompt: this.deps.baseSystemPrompt + '\n\n' + taskContextBlock(tree, task) + UNATTENDED_RULE,
+      memoryProvider: this.deps.memoryProvider,
+      maxRounds: this.opts.subtaskRounds,
+    });
+
+    // 瞬时网络错误自动重试 1 次；非瞬断/超次数 → 标 failed 返回，交给主循环 replan
+    // （修正 A4 遗留问题：原 catch 末尾 continue 会在非瞬断错误时无限重试直到 subLoop.run 碰巧成功）
+    let res: LoopResult;
+    let attempts = 0;
+    for (;;) {
+      attempts++;
+      try {
+        res = await subLoop.run(`子任务 ${task.id}：${task.desc}`, ctx, {
+          onEvent: (ev) => this.deps.onEvent?.(task.id, ev),
+        });
+        break;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        const transient = /terminated|fetch failed|ECONNRESET|socket|timed ?out|timeout/i.test(msg);
+        if (attempts < 2 && transient) continue;
+        task.status = 'failed';
+        task.note = msg.slice(0, 200);
+        outcomes[task.id] = { status: 'failed', rounds: 0, toolCalls: 0, note: task.note };
+        await this.saveTree(tree, ctx);
+        return { done: false, aborted: false };
+      }
+    }
+
+    task.rounds = res.rounds;
+    task.toolCalls = res.toolCalls;
+
+    // 失败判定：中断 / 工具失败率 > 30% / 写类工具成败 / 无产出反问 / verify 分层（K6 + K7）
+    const toolEvents = res.events.filter((ev) => ev.type === 'tool') as Array<{
+      payload: { name?: string; result?: { ok?: boolean }; arguments?: unknown };
+    }>;
+    const fails = toolEvents.filter((ev) => ev.payload?.result?.ok === false).length;
+    const failRate = toolEvents.length ? fails / toolEvents.length : 0;
+    const note = res.answer?.slice(0, 400) ?? '';
+    // K6：写类工具（fs_write/fs_append/fs_patch）单独统计成败——T1 实测暴露：
+    // 写操作全失败但总失败率 < 30% 时会被误判 done（假阳性）
+    let writeOk = 0;
+    let writeFail = 0;
+    let lastWriteIdx = -1;
+    toolEvents.forEach((ev, idx) => {
+      const n = ev.payload?.name;
+      if (n === 'fs_write' || n === 'fs_append' || n === 'fs_patch') {
+        if (ev.payload?.result?.ok === false) writeFail++;
+        else {
+          writeOk++;
+          lastWriteIdx = idx;
+        }
+      }
+    });
+    // 【K7-①/②】verify 分层判定（最后一次成功写之后的验证动作）：
+    // - strong = 语义验证（fs_grep 搜引用点 / shell 跑 node --check|--test|npm test）
+    // - weak = 仅 fs_read 读回（读回自己刚写的内容 ≠ 功能完成）
+    // - none = 无任何验证
+    // 写失败（writeFailed）→ 真失败（K6 保留）；写了但未自验 → 降级 warning 仍判 done——
+    // 误杀真实产出（写了 5-6 次完整代码仅因轮次耗尽没自验）代价 > 放过半成品；
+    // 半成品由任务树中"全局验证"子任务（如 t5 全链路验证）兜底抓出
+    const afterWrites = lastWriteIdx >= 0 ? toolEvents.slice(lastWriteIdx + 1) : [];
+    const verifyStrong = afterWrites.some((ev) => {
+      const n = ev.payload?.name;
+      if (n === 'fs_grep') return true;
+      if (n === 'shell_run') {
+        const args = ev.payload?.arguments as { command?: string; cmd?: string } | undefined;
+        const cmd = String(args?.command ?? args?.cmd ?? '');
+        return /node .*--check|node .*--test|npm test|npm run check/i.test(cmd);
+      }
+      return false;
+    });
+    const verifyWeak = afterWrites.some((ev) => ev.payload?.name === 'fs_read');
+    const verifyLevel = verifyStrong ? 'strong' : verifyWeak ? 'weak' : 'none';
+    const writeFailed = (writeFail > 0 && writeOk === 0) || writeFail > writeOk;
+    const wrote = writeOk > 0 || res.events.some((ev) => {
+      if (ev.type !== 'tool') return false;
+      const p = ev.payload as { name?: string };
+      return p.name === 'artifact_create' || p.name === 'memory_save';
+    });
+    const clarify = /(请确认|你选一个|我需要澄清|无法确定|需要你来决定)/.test(note);
+    const noOutput = !wrote && clarify && res.rounds <= 4;
+    // 【K8 v3】空转假阳性：实现类子任务（desc 含实现关键词）零写操作且无"功能已就位"证据 → failed
+    // （t4 型：全程只读探索后轮次耗尽零产出；核对确认型例外：功能本已存在，note 含"已满足/已完整实现"等证据）
+    // v2 修正（第五跑 3 误杀）：证据词扩充 + 验证类豁免 + 去"创建"
+    // v3 修正（第六跑 t4 逃逸）：VERIFY 豁免只查 desc 不查 verify——"fs_grep 确认 XXX 存在"是实现类
+    // 任务的验收措辞（verify），不是验证类任务特征；验证类任务的标志在 desc（"验证/走通/回归"是动作）
+    const IMPL_RE = /(修改|新增|实现|写入|生成|添加|增加|落地|改造|接入|挂载|编写)/;
+    const DONE_EVIDENCE_RE =
+      /(已完成|已存在|已实现|已经完成|已由|前序|已落地|已经具备|已有|已对接|已满足|无需改动|无需修改|已完整|已齐全|已就绪|已经接入)/;
+    const VERIFY_TASK_RE = /(验证|测试|检查|走通|回归|核实|复核|审查)/;
+    const idleFakeDone =
+      !VERIFY_TASK_RE.test(task.desc) &&
+      (IMPL_RE.test(task.desc) || IMPL_RE.test(task.verify)) &&
+      writeOk === 0 &&
+      writeFail === 0 &&
+      !DONE_EVIDENCE_RE.test(note);
+
+    if (res.aborted || failRate > 0.3 || writeFailed || noOutput || idleFakeDone) {
+      const why = res.aborted
+        ? '被中断'
+        : writeFailed
+          ? `写类工具失败(${writeFail}次)≥成功(${writeOk}次)，代码未落地`
+          : idleFakeDone
+            ? '实现类子任务零写操作且无"功能已就位"证据（空转假阳性，只读不写=未完成）'
+            : failRate > 0.3
+              ? `工具失败率过高(${(failRate * 100).toFixed(0)}%)`
+              : '无产出反问（违反无人值守纪律）';
+      task.status = 'failed';
+      task.note = `${why} | ${note}`.slice(0, 300);
+      outcomes[task.id] = { status: 'failed', rounds: res.rounds, toolCalls: res.toolCalls, note: task.note };
+      await this.saveTree(tree, ctx);
+      return { done: false, aborted: res.aborted };
+    }
+
+    task.status = 'done';
+    const verifyWarn =
+      writeOk > 0 && verifyLevel === 'none'
+        ? `⚠️ 写了 ${writeOk} 次但无任何读回/grep 验证（降级 warning，由全局验证子任务兜底）| `
+        : writeOk > 0 && verifyLevel === 'weak'
+          ? `⚠️ 仅读回未做语义验证（应 grep 引用点/跑最小检查）| `
+          : '';
+    task.note = (verifyWarn + note).slice(0, 300);
+    outcomes[task.id] = { status: 'done', rounds: res.rounds, toolCalls: res.toolCalls, note: task.note };
+    await this.saveTree(tree, ctx);
+    return { done: true, aborted: false };
   }
 
   /** A4 失败自愈：LLM 读失败原因 → 增删改未完成任务树 → 落盘 → 返回是否有效
