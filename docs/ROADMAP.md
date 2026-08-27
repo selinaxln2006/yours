@@ -123,13 +123,24 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 | B4 | **push GitHub** | 本地已领先 origin 5 commits |
 | B5 | **前端美化** | design tokens 体系（高级感风格，待 A 线空档期做） |
 
-### C 线 · 技能生态与量化交汇（P2，A 线 G8 通过后启动）
+### C 线 · 技能生态、多 agent 协作与量化交汇（P2，A 线 G8 通过后启动；reviewer 只读配置可提前）
 
 | # | 事项 | 说明 |
 |---|------|------|
 | C1 | 技能包规范固化 | life 包为样板，沉淀 pkg 开发文档 |
+| C1.5 | **reviewer 只读配置**（代码审查 agent） | 引擎已支持，半天可做（§十）；"评审→修改闭环"等 A1 后并入 planner |
 | C2 | **多因子交易 Agent**（个人北极星项目） | 在 PAA 之上构建：WorldQuant/Numerai 数据 → 因子库 → 组合 → 回测 → 报告。**依赖 A 线**（需要长程自主 + 并行 + 产物） |
 | C3 | 更多 MCP 接入 | 按需（如 Google Calendar OAuth 双向） |
+| C4 | **多 agent 协作收口** | builder/reviewer 双角色跑 T1 级任务，审查报告 JSON 闭环（§十） |
+
+### D 线 · 产品化与分发（P3，G8 后启动；D0 profile 设计可与 S 线并行）
+
+| # | 事项 | 说明 |
+|---|------|------|
+| D0 | 多用户 profile 设计 | 本地数据按 `data/users/<uid>/` 分区；与 S 线云端身份打通（§九柱 4） |
+| D1 | **Tauri 桌面壳** | console 前端 + Node agent 服务（sidecar）打包：macOS `.app/.dmg` + Windows + Linux（§九柱 3） |
+| D2 | **iOS 壳** | Capacitor 包 console → iOS app；手机远程访问本地 agent |
+| D3 | 安装向导 + 分发 | 一键安装、首次配置引导（API key / 模型 / 云端登录可选），开源分发 |
 
 ---
 
@@ -188,6 +199,10 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 | **S4** | A3 断点续跑（任务树落盘+resume）→ A4 re-plan | B3 index 退役 | S2 收尾 + S3 Realtime |
 | **S5** | T1 三次实测（完成率 → 100% 冲刺）→ A5 C2 收口 | B5 美化（可选） | S3 多浏览器实测 |
 | **S6** | **G8 验收**：T1 全流程 0 插手完成 = 绿灯 | — | 全端打通验收 |
+| **S7（Phase C 起）** | 多 agent 协作：reviewer 只读配置 → 评审→修改闭环 → C2 交易 Agent | D0 profile 设计（与 S 线打通） | 云端身份 → 多用户 profile 映射 |
+| **S8（Phase D 起）** | — | **D1 Tauri 打包**（macOS .app/.dmg）→ D2 iOS 壳 → D3 分发 | 多设备实测 |
+
+> **最终形态验收（§九）**：任何人在自己电脑装好安装包 → 双击打开 → 本地 agent 上线 → 任意浏览器打开前端可用 → （可选）登录云账号多端同步 → 这就是"OpenClaw 式 + 浏览器前端 + 苹果安装包 + 人人可用"的完整闭环。
 
 **验收纪律**：每次 T1 实测记录完成率（子任务完成数/总数）与卡点，完成率决定下一会话做哪个能力。G8 通过 = 完成率 100% + 中途 0 人工插手 + 产物真实可用。慢速 = 会话间隔随意（1-7 天），每会话内多线并行推进。
 
@@ -206,6 +221,69 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 
 ---
 
-## 九、一句话总结
+## 九、最终形态愿景（2026-08-27 俪宁定调）——PAA 不是玩具，是产品
 
-> 能力清单（G1–G7）打完了，从今天起 PAA 只有一件事：**让 agent 把一个模糊大目标从头到尾自己干完**。靶子已就位（T1），缺什么就造什么（六件套补满路径见 §三），造完立刻再跑。数据层多端打通（§六）独立并行、随时可插队。G8 绿灯之前，不谈"Codex 级"。
+> 俪宁原话：**"这个项目我希望最终形态是 agent 活在本地（类似 OpenClaw 的能力）；有一个任何浏览器都能打开的前端；和电脑软件/手机程序适配苹果的安装包；并且对于所有用户都能使用。"**
+
+### 产品形态定义（四根柱子）
+
+| # | 柱子 | 含义 | 对应现状 | 差距 |
+|---|------|------|---------|------|
+| 1 | **本地 agent 核心（OpenClaw 式）** | agent 以常驻守护进程活在用户自己电脑上：自主循环 + 技能系统 + 记忆 + 多模型 + 无云依赖 | PAA CLI/console（大脑层已具备） | 长驻 daemon 化（守护 + 任务队列 + 崩溃自愈，服务自启已配一半） |
+| 2 | **任意浏览器前端** | 打开 `http://localhost:8765` 即可用，不装任何东西；远程访问时走隧道 | console v1.3（chat + 8 面板，已可用） | 会话管理（T1）、美化（B5） |
+| 3 | **苹果安装包** | macOS `.app/.dmg` + iOS 应用（适配手机），一键安装 | 无 | **Tauri 桌面壳**（Phase D1）+ **iOS 壳**（Phase D2） |
+| 4 | **对所有用户可用** | 开源分发：任何人装好即用（自己的本地 agent），非仅俪宁个人工具 | 单机单用户 | 多用户 profile（Phase D3）+ 安装向导 + 分发 |
+
+### 形态演进路线（补进节奏表）
+
+- **Phase C 内嵌**：D0 多用户 profile 设计（云端身份已有 Supabase Auth 铺垫；本地数据按 profile 分区 `data/users/<uid>/`）——不阻塞 A 线
+- **Phase D1 · Tauri 桌面壳**（G8 后）：console 前端包进 Tauri（Rust 壳 + WebView），产出 macOS `.app/.dmg` + Windows `.exe` + Linux；**Tauri 壳里直接跑 Node agent 服务**（sidecar 进程），用户双击图标 = agent 上线
+- **Phase D2 · iOS 壳**（D1 后）：Capacitor 包 console WebView 成 iOS app（App Store 分发或 TestFlight）；手机访问本地 agent 走局域网/隧道
+- **Phase D3 · 多用户**：本地单实例多 profile（每用户独立数据/记忆/会话），与 S 线云端身份打通（登录 = 选 profile）
+
+> 注意：① 多端同步（S 线 §六）与"多用户"是两件事——S 线是**同一个人**多设备同步；D3 是**不同人**在同一台/不同机器上各自独立使用。② 本地 agent 的产品哲学 = 数据主权在用户（OpenClaw 同款），云端只做可选的同步与身份，永远不是必要依赖。
+
+---
+
+## 十、多 agent 协作（代码审查 / 优化 / 功能拓展）—— 2026-08-27 俪宁规划
+
+> 俪宁原话：**"我后续会引入其它 agent 做代码审查与优化、功能拓展。这个在哪个 phase 怎么实现？"**
+
+### 定位：这不需要新引擎，是现有引擎的"角色复用"
+
+PAA 的循环引擎（AgentLoop）本身就是**宿主无关 + 工具注入**的。评审 agent 和开发 agent 是**同一个引擎、不同配置**：
+
+```
+同一 AgentLoop 引擎
+├─ builder agent（主）：工具白名单 = 全量（读/写/shell/记忆/产物）
+└─ reviewer agent（评审）：工具白名单 = 只读集（fs_list/fs_grep/fs_read/fs_check）
+     + system prompt = "你是代码审查员：只读代码、输出问题清单 JSON，禁止修改任何文件"
+```
+
+| 维度 | builder（主 agent） | reviewer（评审 agent） |
+|------|--------------------|-----------------------|
+| 工具 | 全量（含写） | **只读**（无 fs_write/patch/shell） |
+| system prompt | 执行者人格 + 硬纪律 | 审查者人格 + 输出规范（问题清单 JSON：严重度/位置/理由/修法） |
+| 产出 | 代码/产物 | **审查报告**（结构化 JSON，落 artifacts/） |
+| 权限 | Autonomy 分级照常 | **L0（永远询问）+ 写工具不存在**——物理上改不了代码 |
+
+### Phase 归属：Phase C（G8 之后第一批），但有一半可以先做
+
+| 子能力 | 依赖 | 最早可做 | 说明 |
+|--------|------|---------|------|
+| reviewer 只读配置 | 无（引擎已支持） | **现在就能做**（半天：一个 agent 配置文件 + 只读工具白名单） | 但"评审结果喂回 builder 再修改"闭环依赖 A 线（跨 run 传递评审意见） |
+| 评审→修改闭环 | ① planner（跨任务传 prior） | **A1 完成后** | planner 的子任务队列天然支持：t_n 实现 → t_{n+1} 评审 → t_{n+2} 修改 |
+| 独立 agent 进程协作 | G8 + 进程间通信 | Phase C | 多 agent 并发跑（如 2 个 reviewer 分模块审），结果聚合 |
+| 社区贡献（他人写 agent/技能） | D 线开源后 | Phase C-D | pkg-loader 已是标准接口：外部 agent = 标准 ToolPkg + 标准只读配置 |
+
+### 落地形态（Phase C 具体方案）
+
+1. **agent 角色配置化**：`paa/agents/reviewer.json`（工具白名单 + system prompt 模板 + Autonomy=0），与 builder 同引擎、同 CLI——`node cli/main.ts --agent reviewer --once "审查 core/planner.ts"`。**一个 CLI flag 就是新角色**，不需要新代码
+2. **评审循环**：planner 任务树里加 `type: "review"` 节点 → 该子任务用 reviewer 配置跑 → 产出审查报告 JSON → 后续子任务（builder）把它作为 prior 输入 → 修改 → 再评审（≤2 轮收敛）
+3. **功能拓展 agent**：本质同 reviewer——外部开发者按 `paa/agents/*.json` 规范声明角色即可，pkg-loader 加载技能，agent 角色加载"人格+白名单+输出规范"。**"引入其它 agent" = 写一个 JSON + 一个工具包，不是改框架**
+
+---
+
+## 十一、一句话总结
+
+> 能力清单（G1–G7）打完了，从今天起 PAA 只有一件事：**让 agent 把一个模糊大目标从头到尾自己干完**（G8）。靶子已就位（T1），缺什么就造什么（六件套补满路径见 §三），造完立刻再跑。数据层多端打通（§六）独立并行。**最终形态 = 本地 OpenClaw 式 agent + 任意浏览器前端 + 苹果安装包 + 人人可用**（§九），多 agent 协作是现有引擎的角色复用（§十）。G8 绿灯之前，不谈"Codex 级"。

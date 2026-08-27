@@ -22,6 +22,7 @@ import { createCoreTools } from '../tools/core-tools.ts';
 import { createMemoryTools } from '../tools/memory-tools.ts';
 import { createArtifactTools } from '../tools/artifact-tools.ts';
 import { createPkgTools } from '../tools/pkg-tools.ts';
+import { Planner } from '../core/planner.ts';
 import { render } from './render.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -37,6 +38,7 @@ const SYSTEM_PROMPT = `你是枢（Shū），俪宁的跨界 AI 搭档。锐利�
 4. 最小修改：只改必要处，不顺手重构
 5. 改后必验：修改后读回验证结果
 6. 不确定先问：模糊场景先向用户说明再动手
+7. 大文件写纪律（>200 行）：禁止一次性写完整个文件（单轮输出会截断）。必须分段：第一轮 fs_write 写文件头+骨架（含注释/导入/类型定义），后续每轮用 fs_append 追加一段（每段 ≤150 行）；全部写完后再 fs_read 验证行数与关键锚点
 
 平台纪律（当前是 Windows/cmd 环境，必须遵守）：
 - pwd / ls / cat / grep / head / which / touch / rm / mv / wc 等 Unix 命令不存在，不要用
@@ -142,12 +144,16 @@ function parseArgs(argv: string[]): {
   root: string;
   level: AutonomyLevel;
   once: string | null;
+  goal: string | null;
+  yes: boolean;
   exportMemory: string | null;
   importMemory: string | null;
 } {
   let root = WORKSPACE_ROOT;
   let level: AutonomyLevel = 2;
   let once: string | null = null;
+  let goal: string | null = null;
+  let yes = false;
   let exportMemory: string | null = null;
   let importMemory: string | null = null;
   for (let i = 0; i < argv.length; i++) {
@@ -158,14 +164,16 @@ function parseArgs(argv: string[]): {
       i++;
     }
     if (argv[i] === '--once' && argv[i + 1]) once = argv[++i];
+    if (argv[i] === '--goal' && argv[i + 1]) goal = argv[++i];
+    if (argv[i] === '--yes') yes = true;
     if (argv[i] === '--export-memory' && argv[i + 1]) exportMemory = path.resolve(argv[++i]);
     if (argv[i] === '--import-memory' && argv[i + 1]) importMemory = path.resolve(argv[++i]);
   }
-  return { root, level, once, exportMemory, importMemory };
+  return { root, level, once, goal, yes, exportMemory, importMemory };
 }
 
 async function main(): Promise<void> {
-  const { root, level, once, exportMemory, importMemory } = parseArgs(process.argv.slice(2));
+  const { root, level, once, goal, yes, exportMemory, importMemory } = parseArgs(process.argv.slice(2));
 
   // 记忆系统（C4）：JSON 文件存储 + L3 画像种子（首次自动初始化）
   const memory = new JsonMemoryProvider({
@@ -204,6 +212,7 @@ async function main(): Promise<void> {
   // 会话级放行集合：a=always allow 加入，重启清除
   const trustedTools = new Set<string>();
   const ask = async (p: string, toolName?: string): Promise<boolean> => {
+    if (yes) return true; // --yes：非交互全自动（脚本/测试/长任务实测）
     if (toolName && trustedTools.has(toolName)) return true;
     const a = (await rl.question(render.ask(p) + ' (y/n/a) ')).trim().toLowerCase();
     if (a === 'a' && toolName) {
@@ -291,6 +300,49 @@ async function main(): Promise<void> {
   const toolNames = pipeline.list().map((t) => t.name);
   console.log(render.status(`工具: ${toolNames.length} 个（${toolNames.join(', ')}）`));
   console.log('');
+
+  // goal 模式（A1 planner）：模糊大目标 → 任务树 → 子任务队列自动执行
+  // 用法：node cli/main.ts --goal "给 console 加多会话功能" [--level N] [--root <dir>]
+  if (goal !== null) {
+    const planner = new Planner({
+      adapter,
+      pipeline,
+      session,
+      baseSystemPrompt:
+        SYSTEM_PROMPT +
+        '\n\n# 仓库结构快照（会话初始注入，直接据此定位路径，不要对未知目录反复 fs_list 试错）\n' +
+        repoTree,
+      memoryProvider: memory,
+      options: { maxTasks: 6, subtaskRounds: 10 },
+      onEvent: (taskId, ev) => {
+        if (ev.type === 'tool') {
+          const p = ev.payload as { name: string; arguments: Record<string, unknown>; result: { ok: boolean; data?: unknown; error?: string } };
+          console.log(render.toolCard(`[${taskId}] ${p.name}`, p.arguments ?? {}, p.result));
+        }
+      },
+    });
+    console.log(render.banner());
+    console.log(render.status(`🎯 目标模式（planner）: ${goal}`));
+    console.log(render.status(`沙箱根: ${root} | Autonomy: L${level} | 会话: ${sessionId}`));
+    console.log(render.status('…生成任务树'));
+    try {
+      const result = await planner.run(goal, ctx);
+      console.log('');
+      for (const [id, oc] of Object.entries(result.outcomes)) {
+        const icon = oc.status === 'done' ? '✅' : '❌';
+        console.log(render.status(`${icon} 子任务 ${id}: ${oc.status}（${oc.rounds} 轮 / ${oc.toolCalls} 次工具调用）`));
+        if (oc.note) console.log(`   ${oc.note}`);
+      }
+      console.log('');
+      console.log(render.assistant(result.summary));
+      console.log(render.status(`任务树已落盘: runs/${sessionId}/task-tree.json`));
+    } catch (e) {
+      console.log(render.error(e instanceof Error ? e.message : String(e)));
+    }
+    rl.close();
+    closeMcp();
+    return;
+  }
 
   // 非交互单次执行（--once "指令"）：脚本/自动化/测试场景
   if (once !== null) {

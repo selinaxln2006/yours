@@ -49,4 +49,9 @@ export class SessionMgr {
     const entries = await readdir(this.baseDir, { withFileTypes: true });
     return entries.filter((e) => e.isDirectory()).map((e) => e.name);
   }
+
+  /** 会话目录绝对路径（planner 任务树、checkpoint 等状态落盘用） */
+  sessionDir(sessionId: string): string {
+    return path.join(this.baseDir, sessionId);
+  }
 }
