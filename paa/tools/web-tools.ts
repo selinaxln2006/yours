@@ -143,7 +143,7 @@ export function createWebTools(): ToolDefinition[] {
       handler: async (args: Record<string, unknown>, ctx: ExecContext) => {
         const url = String(args.url);
         if (!/^https?:\/\//i.test(url)) throw new Error('仅支持 http/https URL');
-        const dlDir = path.resolve(ctx.root, 'downloads');
+        const dlDir = path.resolve(ctx.cwd, 'downloads');
         await mkdir(dlDir, { recursive: true });
         const name = args.as ? String(args.as).replace(/[\\/:*?"<>|\x00-\x1f]/g, '_') : safeBasename(url);
         const target = path.join(dlDir, name);

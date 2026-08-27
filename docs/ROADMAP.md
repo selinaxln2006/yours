@@ -119,6 +119,27 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 
 **对六件套顺序的修正**：done 判定 = goal-level 的"验收仪表盘"，假阳性 = 仪表盘坏了——**K6 比 Compaction（②）更优先**。A2 顺延到下次 T1 重跑通过后。下次实测目标：K6 修复后 T1 重跑，期望真实完成率显著提升（不再假 done）。
 
+### T1 三次实测（S4，2026-08-27）——K6 验证通过，新卡点 K7
+
+**跑法**：同目标（会话管理全链路），每跑前 `git checkout` 恢复基线，三跑横向可比。判定口径 = planner 标 done/failed；真实口径 = git diff 人工核查。
+
+| 跑次 | 判定 done | 真实完成度（git diff 铁证） | 观察 |
+|------|----------|---------------------------|------|
+| 1 | 3/5（t2/t4 failed） | server 接入✅ 会话 API✅ t5 自修 /api/chat ReferenceError✅ CLI 部分✅；console.html 0 改动 | **0 假 done**（K6 生效）；t3 曾删 getChatSession 破坏 /api/chat，t5 自主发现并修复 |
+| 2 | 2/5（t2/t3/t5 failed） | server 接入 + 全部会话端点（GET/POST/rename/remove/append）✅ 但**判定误杀**；t4 假 done（t5 grep 看穿"CLI 无 fetch"）；CLI 0 改动 | 误杀 t2/t3（写了未自验但代码真实完整）；t4 半成品骗过 verify |
+| 3 | 4/5（t2 failed） | server 接入✅ 会话 API✅ **sessions-client.ts 高质量 CLI 客户端✅** 类型债 13→7✅；t5 验证遇端口 EADDRINUSE 未完整跑通 | 最高完成率；产出已保留（测试 55/55 通过） |
+
+**结论**：
+- **K6 主目标达成**：假 done 从 S3 的 5/5 → 三跑平均 ≤1/跑，且 agent 每跑都能自主发现上游假 done（t5 的 grep 验证），判定机制在追赶 agent 的感知。
+- **K7 新卡点（四根因）**：
+  1. **verify 时序误伤**：agent 自然工作流 = "多次写 → 最后统一验证"，10 轮内写 5-6 次后轮次耗尽 → 判 failed，但代码真实完整（t2 三跑全 failed、store 接入三跑全落地）。修法方向：区分"写失败"（真失败）与"写了未自验"（降级 warning + 依赖全局 verify 子任务兜底）。
+  2. **verify 语义不足**：读回自己写的内容 ≠ 功能完成（t4 半成品读过回骗过验证）。修法方向：verify 要求**语义断言**（grep 关键调用点/跑最小测试），不只读回。
+  3. **任务树拆解漂移**：三跑 t4 全拆成"CLI 交互"而非 console.html 前端——T1 定义里的前端 UI 从未被正确拆解。修法方向：planner prompt 锚定"前端 UI = 改 console.html"。
+  4. **Windows 跨平台**：`cat` 不存在（shell_run 报"不是内部或外部命令"）、端口冲突 EADDRINUSE。修法方向：提示词加 Windows 命令对照。
+- **T1 现状**：server 数据层+API+CLI 客户端已真实可用（第三跑产出保留），**console.html 前端 UI 是唯一缺口**（三跑都没拆对）。
+
+**下一步**：① K7 修复（verify 时序/语义 + 拆解锚定 + Windows 提示）→ ② console.html 前端补全（人类/agent 皆可，T1 收口）→ ③ 之后 A2 Compaction。
+
 ---
 
 ## 四、G8 第一靶子（候选，待俪宁选）
@@ -232,8 +253,9 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 |------|------------|------------|--------------|
 | **S1（今天）** | ✅ **A0 基线录制完成**（卡点 K1-K4，见 §三） | ✅ B1 服务自启+看门狗、✅ B4 push | Supabase 账号准备（俪宁注册，给我 key） |
 | **S2** | ✅ **K1 修复**（maxTokens 8192 + 分段写纪律）→ ✅ **A1 planner 实现**（`core/planner.ts`，`--goal` 模式，三次实测 100% 完成率，新卡点 K5 已闭环，commit `2d0117b`） | B2 会话管理 API（agent 种子已就位，人类补齐 server 端） | **S1 OAuth 登录**（server 登录端点 + 前端按钮 + user_id 落盘） |
-| **S3** | ✅ **T1 二次实测**（暴露 K6 假阳性：5/5 标 done 实际 1/5，三根因已修复）→ A2 Compaction 顺延至 T1 重跑后 | B2 前端会话管理器 UI（T1 假 done，待重跑） | ✅ 教程已交付（docs/SUPABASE-SETUP.md）；⏳ **等俪宁注册给 key** → S1 登录 + S2 同步 |
-| **S4** | A3 断点续跑（任务树落盘+resume）→ A4 re-plan | B3 index 退役 | S2 收尾 + S3 Realtime |
+| **S3** | ✅ **T1 二次实测**（暴露 K6 假阳性：5/5 标 done 实际 1/5，三根因已修复）→ A2 Compaction 顺延至 T1 重跑后 | B2 前端会话管理器 UI（T1 假 done，待重跑） | ✅ 教程已交付（docs/SUPABASE-SETUP.md）；✅ **俪宁已注册给 key（已验证有效）** |
+| **S4** | ✅ **T1 三次实测**（K6 验证通过：假 done 5/5→≤1/跑；第三跑产出保留：server 会话 API + sessions-client.ts + 类型债 13→7；新卡点 K7 四根因）→ **K7 修复**（verify 时序/语义 + 拆解锚定 console.html + Windows 提示） | B2 console.html 前端 UI 收口（T1 唯一缺口） | **S1 OAuth 联调**（俪宁 dashboard 配置中 → server 登录端点 + 前端按钮 + user_id 落盘） |
+| **S5** | A3 断点续跑（任务树落盘+resume）→ A4 re-plan | B3 index 退役 | S2 收尾 + S3 Realtime |
 | **S5** | T1 三次实测（完成率 → 100% 冲刺）→ A5 C2 收口 | B5 美化（可选） | S3 多浏览器实测 |
 | **S6** | **G8 验收**：T1 全流程 0 插手完成 = 绿灯 | — | 全端打通验收 |
 | **S7（Phase C 起）** | 多 agent 协作：reviewer 只读配置 → 评审→修改闭环 → C2 交易 Agent | D0 profile 设计（与 S 线打通） | 云端身份 → 多用户 profile 映射 |

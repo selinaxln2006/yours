@@ -50,8 +50,10 @@
 | 名称 | 示例 | 用途 |
 |------|------|------|
 | **Project URL** | `https://abcdefgh.supabase.co` | 云端地址 |
-| **anon public key**（`anon` / `public` 那个） | `eyJhbGciOi...` | **给我，S1 用** |
-| **service_role key** | `eyJhbGciOi...` | **自己留好，放本地，别外传** |
+| **anon public key**（`anon` / `public` 那个） | `eyJhbGciOi...` 或新格式 `sb_publishable_...` | **给我，S1 用** |
+| **service_role key** | `eyJhbGciOi...` 或新格式 `sb_secret_...` | **自己留好，放本地，别外传** |
+
+> ⚠️ **新旧格式说明**：2025 年后新项目改用新前缀——**publishable key（`sb_publishable_` 开头）= 旧 anon key**，公开安全；**secret key（`sb_secret_` 开头）= 旧 service_role key**，超级权限绝密。看到 `sb_publishable_` 别慌，就是给枢的那个。
 
 3. 把 **Project URL + anon key** 直接发到对话里给枢 → 枢写进 `paa/config.json`，S1（OAuth 登录 + 数据同步）立即启动
 

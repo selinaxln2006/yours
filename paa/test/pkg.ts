@@ -148,7 +148,7 @@ test('校验失败矩阵：非法 manifest 一律拒绝且不残留', async () =
     const m = JSON.parse(readFileSync(manifestPath, 'utf8')) as Record<string, unknown>;
     c.mutate(m);
     writeFileSync(manifestPath, JSON.stringify(m, null, 2), 'utf8');
-    await assert.rejects(() => h.loader.load('hello'), undefined, c.name);
+    await assert.rejects(() => h.loader.load('hello'), /.+/, c.name);
     assert.equal(h.loader.isLoaded('hello'), false, `${c.name}: 不应标记已加载`);
     assert.equal(h.pipeline.list().length, 0, `${c.name}: 不应残留工具`);
   }

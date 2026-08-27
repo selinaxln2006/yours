@@ -180,28 +180,18 @@ function handleWsMessage(conn: WsConnection, msg: WsMessage): void {
   // 其余客户端消息暂不需要（预留）
 }
 
-// ---- 对话会话（跨 run 历史） ----
+// ---- 对话会话（跨 run 历史，经 ChatSessionStore 持久化到 data/sessions/*） ----
+let chatStore: ChatSessionStore;
 interface ChatSession {
   id: string;
   messages: ChatMessage[];
   createdAt: number;
 }
-const chatSessions = new Map<string, ChatSession>();
 const MAX_HISTORY = 60;
 
-function getChatSession(id?: unknown): ChatSession {
-  const sid = typeof id === 'string' && id.trim() ? id.trim() : `s-${randomUUID().slice(0, 8)}`;
-  let s = chatSessions.get(sid);
-  if (!s) {
-    s = { id: sid, messages: [], createdAt: Date.now() };
-    chatSessions.set(sid, s);
-    // 只保留最近 20 个会话（内存防膨胀）
-    if (chatSessions.size > 20) {
-      const oldest = [...chatSessions.values()].sort((a, b) => a.createdAt - b.createdAt)[0];
-      if (oldest) chatSessions.delete(oldest.id);
-    }
-  }
-  return s;
+async function getChatSession(id?: unknown): Promise<ChatSession> {
+  const rec = await chatStore.getOrCreate(id);
+  return { id: rec.id, messages: rec.messages, createdAt: rec.createdAt };
 }
 
 // ---- HTTP 工具 ----
@@ -279,6 +269,10 @@ async function main(): Promise<void> {
   // 数据层
   const lifeStore = new LifeStore(path.join(PAA_ROOT, 'data', 'life'));
   await lifeStore.init();
+
+  // 对话会话 store（data/sessions/*，启动加载 + 原子写持久化 + 损坏自愈）
+  chatStore = new ChatSessionStore(path.join(PAA_ROOT, 'data', 'sessions'));
+  await chatStore.init();
 
   // 大脑层
   const memory = new JsonMemoryProvider({
@@ -415,9 +409,81 @@ async function main(): Promise<void> {
         return;
       }
 
-      // ---- REST：会话列表 ----
+      // ---- REST：会话 CRUD（多会话，经 ChatSessionStore 持久化到 data/sessions/*） ----
+      // 列表
       if (p === '/api/sessions' && req.method === 'GET') {
-        sendJson(res, 200, [...chatSessions.values()].map((s) => ({ id: s.id, messages: s.messages.length, createdAt: s.createdAt })));
+        sendJson(res, 200, { ok: true, sessions: chatStore.list() });
+        return;
+      }
+      // 创建
+      if (p === '/api/sessions' && req.method === 'POST') {
+        const body = JSON.parse((await readBody(req)).toString('utf8')) as { title?: string };
+        const rec = await chatStore.create(typeof body.title === 'string' ? body.title : undefined);
+        sendJson(res, 201, { ok: true, session: rec });
+        return;
+      }
+      // 单个会话详情（含消息历史）
+      const sessionIdMatch = /^\/api\/sessions\/([a-zA-Z0-9-]+)$/.exec(p);
+      if (sessionIdMatch) {
+        const sid = sessionIdMatch[1];
+        const rec = await chatStore.get(sid);
+        if (!rec) {
+          sendJson(res, 404, { error: `会话不存在: ${sid}` });
+          return;
+        }
+        if (req.method === 'GET') {
+          sendJson(res, 200, { ok: true, session: rec });
+          return;
+        }
+        if (req.method === 'DELETE') {
+          await chatStore.remove(sid);
+          sendJson(res, 200, { ok: true, removed: sid });
+          return;
+        }
+      }
+      // 单会话发消息（写入 store 并返回回复）
+      const sessionMsgMatch = /^\/api\/sessions\/([a-zA-Z0-9-]+)\/messages$/.exec(p);
+      if (sessionMsgMatch && req.method === 'POST') {
+        const sid = sessionMsgMatch[1];
+        const rec = await chatStore.get(sid);
+        if (!rec) {
+          sendJson(res, 404, { error: `会话不存在: ${sid}` });
+          return;
+        }
+        const body = JSON.parse((await readBody(req)).toString('utf8')) as { message?: string };
+        const message = typeof body.message === 'string' ? body.message.trim() : '';
+        if (!message) {
+          sendJson(res, 400, { error: 'message 必填' });
+          return;
+        }
+        const ctx = {
+          sessionId: serverSessionId,
+          cwd: WORKSPACE_ROOT,
+          ask: askOverWs,
+          audit,
+        };
+        const runP = chatQueue.then(async () => {
+          const result = await loop.run(message, ctx, {
+            prior: rec.messages.slice(-MAX_HISTORY),
+            onEvent: (ev) => broadcast({ type: 'event', ev }),
+          });
+          const uiHistory = messagesToUiHistory(result.messages ?? []);
+          const updated = await chatStore.append(sid, result.messages ?? [], uiHistory);
+          return {
+            ok: true,
+            sessionId: sid,
+            answer: result.answer,
+            rounds: result.rounds,
+            toolCalls: result.toolCalls,
+            session: updated,
+          };
+        });
+        chatQueue = runP.catch(() => undefined);
+        try {
+          sendJson(res, 200, await runP);
+        } catch (e) {
+          sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) });
+        }
         return;
       }
 
@@ -429,7 +495,7 @@ async function main(): Promise<void> {
           sendJson(res, 400, { error: 'message 必填' });
           return;
         }
-        const chatSession = getChatSession(body.sessionId);
+        const chatSession = await getChatSession(body.sessionId);
         const ctx = {
           sessionId: serverSessionId,
           cwd: WORKSPACE_ROOT,
@@ -442,7 +508,9 @@ async function main(): Promise<void> {
             prior: chatSession.messages.slice(-MAX_HISTORY),
             onEvent: (ev) => broadcast({ type: 'event', ev }),
           });
-          // 更新会话历史（去 system 的完整轨迹）
+          // 更新会话历史（去 system 的完整轨迹）→ 持久化到 store
+          const uiHistory = messagesToUiHistory(result.messages ?? []);
+          await chatStore.append(chatSession.id, result.messages ?? [], uiHistory);
           chatSession.messages = (chatSession.messages ?? []).concat(result.messages ?? []).slice(-MAX_HISTORY);
           return {
             ok: true,

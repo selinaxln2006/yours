@@ -26,7 +26,7 @@ test('原子写：落盘内容与缓存一致，无 .tmp 残留', async () => {
   const { store, dir } = makeStore();
   await store.init();
   await store.tx((d) => {
-    d.weights.push({ id: 'w1', weight: 57.5, date: '2026-08-25' });
+    (d.weights as Array<{ id: string; weight: number; date: string }>).push({ id: 'w1', weight: 57.5, date: '2026-08-25' });
   }, { source: 'agent' });
   const onDisk = JSON.parse(readFileSync(path.join(dir, 'weights.json'), 'utf8'));
   assert.equal(onDisk.length, 1);
@@ -71,10 +71,10 @@ test('tx 事务：多键一次提交，逐键发 change 事件，未变更键不
   store.on('change', (ev: { key: string; source: string }) => events.push(ev));
 
   const { changed } = await store.tx((d) => {
-    d.goals.push({ id: 'g1', title: '减重', type: 'weight', target: 52, status: 'active', milestones: [] });
-    d.todos.push({ id: 't1', title: '每周称重', priority: 'mid', done: false, dueDate: '2026-09-01' });
+    (d.goals as Array<Record<string, unknown>>).push({ id: 'g1', title: '减重', type: 'weight', target: 52, status: 'active', milestones: [] });
+    (d.todos as Array<Record<string, unknown>>).push({ id: 't1', title: '每周称重', priority: 'mid', done: false, dueDate: '2026-09-01' });
     // 读一下但不改的键不应出现在 changed
-    void d.weights;
+    void (d.weights as unknown[]);
   }, { source: 'agent' });
 
   assert.deepEqual(changed.sort(), ['goals', 'todos']);
@@ -85,7 +85,9 @@ test('tx 事务：多键一次提交，逐键发 change 事件，未变更键不
 test('importBlob replace：整包替换 + import 事件', async () => {
   const { store } = makeStore();
   await store.init();
-  await store.tx((d) => { d.weights.push({ id: 'old', weight: 60, date: '2026-01-01' }); }, { source: 'agent' });
+  await store.tx((d) => {
+    (d.weights as Array<{ id: string; weight: number; date: string }>).push({ id: 'old', weight: 60, date: '2026-01-01' });
+  }, { source: 'agent' });
 
   await store.importBlob({
     weights: [{ id: 'n1', weight: 57.5, date: '2026-08-25' }],
@@ -115,5 +117,5 @@ test('importBlob merge：数组拼接 + 对象覆盖', async () => {
   assert.equal(p.height, 170);
   assert.equal(p.age, 21);
   // merge 不带的键保持默认
-  assert.equal(p.targetWeight, defaultLifeData().profile.targetWeight);
+  assert.equal(p.targetWeight, (defaultLifeData().profile as Record<string, unknown>).targetWeight);
 });
