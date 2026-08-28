@@ -572,10 +572,20 @@ function tickClock(){
 }
 
 /* ---------- S1 登录态：/api/auth/me → 徽标（点击登出/去登录） ---------- */
+/* 兜底通道：OAuth 回跳带 ?st=<sid>（Set-Cookie 可能被 SW/浏览器拦截）→ JS 直接写 cookie（30 天） */
+function adoptSessionToken(){
+  try {
+    const st = new URLSearchParams(location.search).get('st');
+    if (!st || !/^[0-9a-f]{32}$/.test(st)) return;
+    document.cookie = 'paa_session=' + st + '; Path=/; SameSite=Lax; Max-Age=' + (30 * 24 * 3600);
+    history.replaceState(null, '', location.pathname); // 清掉 URL 里的 st，避免留在历史记录
+  } catch { /* 忽略 */ }
+}
+
 async function checkAuth(){
   const el = $('#authBadge');
   try {
-    const res = await fetch('/api/auth/me', { headers: { 'Accept': 'application/json' } });
+    const res = await fetch('/api/auth/me?ts=' + Date.now(), { headers: { 'Accept': 'application/json' } });
     if (res.ok) {
       const d = await res.json();
       const u = d.user || {};
@@ -2160,6 +2170,7 @@ function init(){
   renderPanel();          // 先渲染面板骨架，不依赖首拉成功
   fetchData();
   connect();
+  adoptSessionToken();   // 兜底：登录回跳带 ?st= 时 JS 写 cookie（Set-Cookie 可能被 SW 吃掉）
   checkAuth();            // S1：登录态徽标
 }
 init();

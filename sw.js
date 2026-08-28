@@ -1,5 +1,5 @@
 /* 枢 · 生活工作台 Service Worker —— 离线缓存应用外壳 */
-const CACHE = 'shu-workbench-v19';
+const CACHE = 'shu-workbench-v20';
 const ASSETS = [
   './',
   './index.html',
@@ -27,6 +27,10 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET' || !req.url.startsWith('http')) return;
+
+  // API 请求（/api/*）：一律直连网络、永不缓存 —— 登录态/同步数据不能吃陈旧缓存
+  const u = new URL(req.url);
+  if (u.pathname === '/api' || u.pathname.startsWith('/api/')) return;
 
   // 导航请求（页面加载）：网络优先 —— 代码更新后刷新即可看到新版本
   if (req.mode === 'navigate') {

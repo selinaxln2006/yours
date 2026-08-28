@@ -63,8 +63,8 @@ interface SupabaseTokenResponse {
 const AUTH_TTL_MS = 10 * 60_000;
 
 export class SupabaseAuth {
-  /** state → { verifier, ts }，callback 一次性消费 */
-  private pending = new Map<string, { verifier: string; ts: number }>();
+  /** 最近一次授权流程的 verifier（单槽：本地单用户，登录流程一次一个） */
+  private pending: { verifier: string; ts: number } | null = null;
   /** 依赖注入配置（Node type stripping 不支持参数属性，用显式赋值） */
   private opts: {
     projectUrl: string;
@@ -90,28 +90,34 @@ export class SupabaseAuth {
     await mkdir(this.opts.userDir, { recursive: true });
   }
 
-  /** 生成 GitHub 授权跳转 URL（PKCE S256） */
+  /** 生成 GitHub 授权跳转 URL（PKCE S256）
+   *
+   *  ⚠️ 不要传 state 参数！GoTrue 服务端会用自己生成的 flow_state UUID 作为
+   *  state（external.go 注释："The flow state ID is used as the state parameter"）。
+   *  客户端传 state 会被 AuthCodeURL 覆盖到 GitHub URL → 回调时 GoTrue 查
+   *  flow_state 表找不到（表里只有它自己生成的 UUID）→ bad_oauth_state。
+   *  官方客户端 supabase-js 同样不传 state。CSRF 由 GoTrue 自己保证。 */
   buildLoginUrl(): string {
-    const state = randomBytes(16).toString('hex');
     const verifier = randomBytes(48).toString('base64url');
     const challenge = createHash('sha256').update(verifier).digest('base64url');
-    this.pending.set(state, { verifier, ts: Date.now() });
+    this.pending = { verifier, ts: Date.now() };
     const u = new URL(`${this.opts.projectUrl}/auth/v1/authorize`);
     u.searchParams.set('provider', 'github');
     u.searchParams.set('redirect_to', this.opts.callbackUrl);
-    u.searchParams.set('state', state);
     u.searchParams.set('code_challenge', challenge);
     u.searchParams.set('code_challenge_method', 'S256');
     return u.toString();
   }
 
-  /** callback：code + state → 换 token → 构建会话（未落盘，由调用方 save） */
-  async exchangeCode(code: string, state: string): Promise<AuthSession> {
-    const p = this.pending.get(state);
-    this.pending.delete(state); // 一次性：防重放
-    if (!p) throw new AuthError('state 无效或已使用，请重新登录');
+  /** callback：code → 换 token → 构建会话（未落盘，由调用方 save） */
+  async exchangeCode(code: string): Promise<AuthSession> {
+    const p = this.pending;
+    this.pending = null; // 一次性：防重放
+    if (!p) throw new AuthError('授权流程不存在，请重新登录');
     if (Date.now() - p.ts > AUTH_TTL_MS) throw new AuthError('授权流程超时，请重新登录');
-    const res = await fetch(`${this.opts.projectUrl}/auth/v1/token?grant_type=authorization_code`, {
+    // 注意：Supabase PKCE 的 grant_type 是 pkce（不是 authorization_code，
+    // 后者 GoTrue 直接回 unsupported_grant_type——token.go 只有 case "pkce"）
+    const res = await fetch(`${this.opts.projectUrl}/auth/v1/token?grant_type=pkce`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', apikey: this.opts.publishableKey },
       // 注意：Supabase PKCE 换 token 的字段名是 auth_code（不是 code）——用 code 会 400 invalid_request

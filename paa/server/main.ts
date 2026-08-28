@@ -479,21 +479,21 @@ async function main(): Promise<void> {
           return;
         }
         const code = url.searchParams.get('code') ?? '';
-        const state = url.searchParams.get('state') ?? '';
-        if (!code || !state) {
-          sendJson(res, 400, { error: '缺少 code/state 参数' });
+        // state 是 GoTrue 自己的 flow_state UUID（我们不传 state），无需也不应校验
+        if (!code) {
+          sendJson(res, 400, { error: '缺少 code 参数' });
           return;
         }
         try {
-          const authSession = await auth.exchangeCode(code, state);
+          const authSession = await auth.exchangeCode(code);
           await auth.save(authSession);
           console.log(`[auth] 登录成功: ${authSession.user.name} (${authSession.user.id})`);
           broadcast({ type: 'auth', event: 'login', user: authSession.user });
           // S2：登录即启用同步引擎并做首次后台同步（云端镜像 → 本地）
           ensureSync(authSession).then(initialSync).catch((e) => console.error(`[sync] 引擎启动失败: ${e instanceof Error ? e.message : e}`));
           res.writeHead(302, {
-            Location: '/',
-            'Set-Cookie': `${SESSION_COOKIE}=${session.sid}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_COOKIE_MAX_AGE}`,
+            Location: '/?st=' + authSession.sid,
+            'Set-Cookie': `${SESSION_COOKIE}=${authSession.sid}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_COOKIE_MAX_AGE}`,
           });
           res.end();
         } catch (e) {
