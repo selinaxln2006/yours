@@ -136,6 +136,23 @@ http://localhost:8765/api/auth/callback
 
 ---
 
+## Step 7 — 开 Realtime 推送（S3 跨端实时同步，一次性，20 秒）
+
+> S3 之后：本地改动几秒内推上云端，云端变更实时拉回本地（多端同步不用手动刷新）。**Realtime 默认不监听任何表，要把两张同步表加进广播**。
+
+1. 左侧 **SQL Editor**，跑：
+
+```sql
+alter publication supabase_realtime add table public.life_sync;
+alter publication supabase_realtime add table public.session_events;
+```
+
+2. 看到 **Success** = 开好了 ✅。之后 server 日志里会出现 `[realtime] connected`（登录状态下）
+
+> 不做这步也不报错——只是「实时推送」退化为「5 分钟定时兜底同步」，数据最终仍一致。
+
+---
+
 ## 安全提醒（重要）
 
 | ⚠️ | 说明 |

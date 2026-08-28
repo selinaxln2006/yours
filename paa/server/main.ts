@@ -34,6 +34,7 @@ import { createWebTools } from '../tools/web-tools.ts';
 import { SupabaseAuth, AuthError, type AuthSession } from './auth.ts';
 import { SyncEngine, SyncState } from '../core/sync.ts';
 import { SupabaseSyncTransport } from './sync-rest.ts';
+import { SupabaseRealtime, type RealtimeState } from '../core/realtime.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PAA_ROOT = path.resolve(__dirname, '..');
@@ -325,22 +326,118 @@ async function main(): Promise<void> {
   let syncEngine: SyncEngine | null = null;
   let syncUserId = '';
 
+  // ---- S3：Realtime 订阅 + 后台补同步 ----
+  let latestAuthSession: AuthSession | null = null; // ensureSync 每次都会刷新（登录/me/sync 三路径）
+  let realtime: SupabaseRealtime | null = null;
+  let realtimeState: RealtimeState | 'off' = 'off';
+  let syncBusy = false;
+  let syncQueued = false;
+  let cloudSyncTimer: ReturnType<typeof setTimeout> | null = null;
+
   /** 同步引擎状态摘要（health/me/sync 端点共用） */
-  function syncInfo(): { enabled: boolean; lastSync: number; lastError?: string; dirty: number } {
-    if (!syncEngine || !syncState) return { enabled: false, lastSync: 0, dirty: 0 };
+  function syncInfo(): {
+    enabled: boolean;
+    lastSync: number;
+    lastError?: string;
+    dirty: number;
+    realtime: RealtimeState | 'off';
+  } {
     return {
-      enabled: true,
-      lastSync: syncState.snapshot.lastSync,
-      lastError: syncState.snapshot.lastError,
-      dirty: Object.keys(syncState.snapshot.dirty).length,
+      enabled: !!syncEngine,
+      lastSync: syncState?.snapshot.lastSync ?? 0,
+      lastError: syncState?.snapshot.lastError,
+      dirty: syncState ? Object.keys(syncState.snapshot.dirty).length : 0,
+      realtime: realtimeState,
     };
+  }
+
+  /** token 快过期时刷新（Realtime 重连 / 后台同步前调用；失败返回 false） */
+  async function refreshTokenIfNeeded(): Promise<boolean> {
+    if (!auth || !latestAuthSession) return false;
+    if (Date.now() < latestAuthSession.expiresAt - 120_000) return true;
+    const r = await auth.refreshIfNeeded(latestAuthSession).catch(() => null);
+    if (r) {
+      latestAuthSession = r;
+      return true;
+    }
+    return false;
+  }
+
+  /** 串行化后台同步：并发请求排队，跑完补跑一轮（防止 syncOnce 交错写状态文件） */
+  async function runBackgroundSync(reason: string): Promise<void> {
+    if (!syncEngine || !latestAuthSession) return;
+    if (syncBusy) {
+      syncQueued = true;
+      return;
+    }
+    syncBusy = true;
+    try {
+      // token 可能已过期（长时间无人访问 me）→ 刷新并重建引擎/Realtime
+      if (await refreshTokenIfNeeded()) {
+        await ensureSync(latestAuthSession);
+      } else {
+        return; // 登录态失效（refresh 失败）→ 等下一次登录
+      }
+      const r = await syncEngine!.syncOnce();
+      console.log(
+        `[sync] 后台同步（${reason}）：pull life ${r.pulledLife.length} / push life ${r.pushedLife.length} / 事件 +${r.pulledEvents} -${r.pushedEvents}`,
+      );
+    } catch (e) {
+      console.error(`[sync] 后台同步失败（${reason}）: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      syncBusy = false;
+      if (syncQueued) {
+        syncQueued = false;
+        void runBackgroundSync(`${reason}+queued`);
+      }
+    }
+  }
+
+  /** 去抖触发一次后台同步（云端事件 1.5s 合并 / 本地改动 4s 批处理窗口） */
+  function scheduleCloudSync(reason: 'realtime' | 'reconnect' | 'local'): void {
+    const delay = reason === 'local' ? 4_000 : 1_500;
+    if (cloudSyncTimer) return;
+    cloudSyncTimer = setTimeout(() => {
+      cloudSyncTimer = null;
+      void runBackgroundSync(reason);
+    }, delay);
+  }
+
+  /** 启动/换用户时重建 Realtime 订阅（云端变更 → 本地感知 → 拉取合并） */
+  function ensureRealtime(): void {
+    if (!supabaseConfig || !syncEngine) return;
+    if (realtime && syncUserId === latestAuthSession?.user.id) return; // 同用户已订阅
+    realtime?.stop(); // 换用户 → 旧订阅作废
+    realtime = new SupabaseRealtime({
+      projectUrl: supabaseConfig.url,
+      publishableKey: supabaseConfig.publishableKey,
+      tables: ['life_sync', 'session_events'],
+      getAccessToken: async () => {
+        if (!(await refreshTokenIfNeeded())) return null;
+        return latestAuthSession?.accessToken ?? null;
+      },
+      onServerChange: (why) => {
+        if (why === 'reconnect') void runBackgroundSync('realtime-reconnect'); // 断线期间的变更立即补拉
+        else scheduleCloudSync('realtime');
+      },
+      onStateChange: (s, detail) => {
+        realtimeState = s;
+        if (s === 'reconnecting') console.log(`[realtime] ${s}: ${detail ?? ''}`);
+        else console.log(`[realtime] ${s}`);
+      },
+    });
+    realtime.start();
   }
 
   /** 按登录会话启用/复用同步引擎（幂等：同用户且 token 未过期则复用） */
   async function ensureSync(authSession: AuthSession): Promise<void> {
     if (!supabaseConfig) return;
+    latestAuthSession = authSession; // 最新会话（后续 token 刷新/Realtime 取 token 用）
     const tokenStillValid = Date.now() < authSession.expiresAt - 60_000;
-    if (syncEngine && syncUserId === authSession.user.id && tokenStillValid) return;
+    if (syncEngine && syncUserId === authSession.user.id && tokenStillValid) {
+      ensureRealtime(); // 引擎可复用，但 Realtime 可能还没起（如 server 重启后第一次 me）
+      return;
+    }
     const state = new SyncState(path.join(PAA_ROOT, 'data', 'sync'));
     await state.init();
     const transport = new SupabaseSyncTransport({
@@ -352,6 +449,7 @@ async function main(): Promise<void> {
     syncEngine = new SyncEngine({ lifeStore, sessionMgr: session, transport, state, userId: authSession.user.id });
     syncUserId = authSession.user.id;
     console.log(`[sync] 同步引擎就绪（user ${authSession.user.id.slice(0, 8)}…）`);
+    ensureRealtime();
   }
 
   /** 登录态下的初始后台同步（fire-and-forget，失败只记 lastError 不打断请求） */
@@ -425,11 +523,13 @@ async function main(): Promise<void> {
   });
 
   // 数据变更 → WS 推送 + S2：本地非同步来源的修改标记 dirty（下次 syncOnce 推送）
+  // S3：本地改动 → 4s 去抖后台推送（云端镜像准实时更新，其他端经 Realtime 感知）
   lifeStore.on('change', (ev: { key: string; source: string; ts: number }) => {
     broadcast({ type: 'change', key: ev.key, source: ev.source, ts: ev.ts });
     if (ev.source !== 'sync' && syncState) {
       syncState.markDirty(ev.key);
       void syncState.save();
+      scheduleCloudSync('local');
     }
   });
   lifeStore.on('heal', (ev: { key: string; quarantine: string }) => {
@@ -541,11 +641,17 @@ async function main(): Promise<void> {
         });
         return;
       }
-      // 登出：删会话文件 + 清 cookie + 停用同步引擎
+      // 登出：删会话文件 + 清 cookie + 停用同步引擎 + 停 Realtime
       if (p === '/api/auth/logout' && req.method === 'POST') {
+        realtime?.stop();
+        realtime = null;
+        realtimeState = 'off';
+        if (cloudSyncTimer) clearTimeout(cloudSyncTimer);
+        cloudSyncTimer = null;
         syncEngine = null;
         syncState = null;
         syncUserId = '';
+        latestAuthSession = null;
         if (auth) {
           const sid = getCookie(req, SESSION_COOKIE);
           if (sid) {
@@ -889,6 +995,9 @@ async function main(): Promise<void> {
     }
   }, 30_000);
   httpServer.on('close', () => clearInterval(heartbeat));
+
+  // S3：定时后台同步（Realtime 挂掉时的兜底通道；登录后才有会话，未登录时 no-op）
+  setInterval(() => void runBackgroundSync('periodic'), 5 * 60_000).unref?.();
 
   httpServer.listen(PORT, HOST, () => {
     console.log('╭──────────────────────────────────────────────╮');
