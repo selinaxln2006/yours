@@ -343,8 +343,8 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 | 阶段 | 内容 | 工作量 |
 |------|------|--------|
 | S1 | Supabase 项目 + Auth OAuth 配置 + server 登录端点（`/api/auth/login|callback|me`）+ 前端登录按钮 + user_id 落盘 | 2-3 天 |
-| S2 | 18 键增量同步（rev + 拉取/推送/合并）+ 会话事件游标同步 + 冲突 LWW | ✅ **代码侧完成**（2026-08-27，commit `6f52461`）——剩俪宁建表 + 登录验证 |
-| S3 | Realtime 跨端推送（云端变更 → 本地 WS 广播）+ 离线补同步 + 多浏览器实测 | ~1 周 |
+| S2 | 18 键增量同步（rev + 拉取/推送/合并）+ 会话事件游标同步 + 冲突 LWW | ✅ **完成**（2026-08-27 代码 `6f52461`；2026-08-28 全链路实测通过——OAuth 登录 + cookie + 首次云同步，sid 笔误修复 `23a33d9`） |
+| S3 | Realtime 跨端推送（云端变更 → 本地 WS 广播）+ 离线补同步 + 多浏览器实测 | ✅ **代码侧完成**（2026-08-28，commit `9664f32`：`core/realtime.ts` Phoenix over 原生 WS 零依赖 + server 集成——云端事件 1.5s 去抖 syncOnce / 本地改动 4s 后台推送 / 5min 定时兜底 / 重连即补拉 / token 过期自动重建。单测 6 + 真实冒烟 `[realtime] connected`）。**待俪宁：Step 7 publication SQL**（不做则退化为定时兜底，数据仍最终一致） |
 | S4 | （可选）移动端访问 / 密码登录 / 多账号切换 | 按需 |
 
 **排期建议**：S1 与 A 线 W1 并行（不阻塞、独立工作线）；S2-S3 在 T1 验收后集中做。**前置依赖唯一：Supabase 账号**。
@@ -363,7 +363,7 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 | **S4** | ✅ **T1 三次实测**（K6 验证通过：假 done 5/5→≤1/跑；第三跑产出保留：server 会话 API + sessions-client.ts + 类型债 13→7；新卡点 K7 四根因）→ **K7 修复**（verify 时序/语义 + 拆解锚定 console.html + Windows 提示） | B2 console.html 前端 UI 收口（T1 唯一缺口） | **S1 OAuth 联调**（俪宁 dashboard 配置中 → server 登录端点 + 前端按钮 + user_id 落盘） |
 | **S5** | ✅ **A2 Compaction 完成**（2026-08-27：compactor.ts + agent-loop 挂载，单测 6 用例 + 集成 31 轮压 93% + 真实 API 回归 3/3，commit `8b09704`）→ ✅ **A3 断点续跑完成**（2026-08-27：planner resumeTree + `--resume <sid>`，单测 4 用例 + 真实 API 两场景，测试 58/58，commit `588158a`）→ ✅ **A4 re-plan 自愈完成**（2026-08-27：主循环化 + replan()，单测 6 用例 + 真实 API replan 冒烟 + 端到端 resume 3/3，测试 59/59，commit `4936fe9`）→ ✅ **⑤ 并行工具完成**（2026-08-27：同轮多工具 Promise.all + 子任务并发 `--concurrency N`，单测 6 用例 + 真实 API 两段冒烟，测试 61/61）→ ✅ **⑥ C2 现场造工具完成**（2026-08-27：fs ENOENT 指引 + planner 造包纪律 + 热挂载闭环，单测 3 + 真实冒烟 4/4，**六件套全绿**，测试 70/70，commit `683f76e`）→ **G8 验收（T1 全流程 0 插手）** | B3 index 退役 | ✅ **S2 代码侧完成**（commit `6f52461`，待俪宁建表 + 登录验证）→ S3 Realtime |
 | **S5** | T1 三次实测（完成率 → 100% 冲刺）→ A5 C2 收口 | B5 美化（可选） | S3 多浏览器实测 |
-| **S6** | **G8 验收**：T1 全流程 0 插手完成 = 绿灯 | — | 全端打通验收 |
+| **S6** | ✅ **G8 第二靶 0 插手通过**（2026-08-28，run `1787895816147`：index.html 退役侦察报告，9/9 子任务，129 次工具调用 ≫ 20 轮线，产出 `docs/architecture/index-retirement-plan.md` 199 行带源码行号交叉验证，只读纪律零违规——1 骨架+3 续写+12 patch 分段写纪律执行到位。第一靶=架构文档模板重构同样 5/5 全绿）。**G8 尚未宣告达成**：判定标准中「中途失败自愈」路径在真实靶子上尚未复现，继续以真实任务迭代 | — | 全端打通验收 |
 | **S7（Phase C 起）** | 多 agent 协作：reviewer 只读配置 → 评审→修改闭环 → C2 交易 Agent | D0 profile 设计（与 S 线打通） | 云端身份 → 多用户 profile 映射 |
 | **S8（Phase D 起）** | — | **D1 Tauri 打包**（macOS .app/.dmg）→ D2 iOS 壳 → D3 分发 | 多设备实测 |
 
