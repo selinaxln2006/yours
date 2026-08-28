@@ -492,6 +492,7 @@ main{display:flex;min-height:0}
           <div class="tab" data-tab="todos">待办<span class="cnt" id="c-todos">0</span></div>
           <div class="tab" data-tab="goals">目标</div>
           <div class="tab" data-tab="memory">记忆</div>
+          <div class="tab" data-tab="tasks">任务树</div>
           <div class="tab" data-tab="settings">设置</div>
           <span class="ctrl">
             <button class="iconbtn" id="panelCollapse" title="收起为边栏">»</button>
@@ -1234,14 +1235,14 @@ function renderPanel(){
     w.innerHTML = '⚠️ <b>服务未连接</b>（127.0.0.1:8765）<br>正在自动重试…<br><small>可运行：<code>node paa/server/main.ts</code></small>';
     body.appendChild(w); return;
   }
-  const renderers = { schedule: pSchedule, fitness: pFitness, wellness: pWellness, finance: pFinance, todos: pTodos, goals: pGoals, memory: pMemory, settings: pSettings };
+  const renderers = { schedule: pSchedule, fitness: pFitness, wellness: pWellness, finance: pFinance, todos: pTodos, goals: pGoals, memory: pMemory, tasks: pTasks, settings: pSettings };
   const fn = renderers[S.tab] || pSchedule;
   body.appendChild(panelHd(S.tab));
   body.appendChild(fn(S.data || {}));
 }
 function panelHd(tab){
   const hd = document.createElement('div'); hd.className='panel-hd';
-  const names = { schedule:'日程 · SCHEDULE', fitness:'健身 · FITNESS', wellness:'养生 · WELLNESS', finance:'记账 · FINANCE', todos:'待办 · TASKS', goals:'目标 · GOALS', memory:'记忆 · MEMORY', settings:'设置 · SETTINGS' };
+  const names = { schedule:'日程 · SCHEDULE', fitness:'健身 · FITNESS', wellness:'养生 · WELLNESS', finance:'记账 · FINANCE', todos:'待办 · TASKS', goals:'目标 · GOALS', memory:'记忆 · MEMORY', tasks:'任务树 · PLANNER', settings:'设置 · SETTINGS' };
   hd.innerHTML = '<b>◈</b> ' + (names[tab] || tab);
   return hd;
 }
@@ -1986,6 +1987,60 @@ function pFinance(d){
     c3.appendChild(wrap);
     f.appendChild(c3);
   }
+  return f;
+}
+
+/* ---------- 面板：任务树（G8 第三靶 · 中途失败自愈查证） ---------- */
+function pTasks(d){
+  const f = document.createDocumentFragment();
+  const sid = S.sessionId;
+  const c = card('Planner 任务树', 'runs/' + (sid ? sid.slice(0,8) : '--') + '/task-tree.json');
+  if (!sid){
+    c.appendChild(emptyBox('尚无活动会话。<br>先对枢发起一个长程目标，再回来看任务树'));
+    f.appendChild(c); return f;
+  }
+  const body = document.createElement('div');
+  body.innerHTML = '<div class="empty">⏳ 加载任务树…</div>';
+  c.appendChild(body); f.appendChild(c);
+  // 异步拉取任务树（含 t3 history 失败自愈快照）
+  fetch('/api/tasks/' + encodeURIComponent(sid))
+    .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+    .then(j => {
+      body.textContent = '';
+      // 目标 + 失败自愈摘要
+      const hd = document.createElement('div');
+      hd.innerHTML = '<div class="gt">🎯 ' + esc(j.goal || '未命名目标') + '</div>';
+      body.appendChild(hd);
+      const hs = j.healSummary || {};
+      const mini = mini3([
+        { lab:'任务节点', val: (j.tasks||[]).length },
+        { lab:'exec-fail', val: hs.execFail||0, cls:'warn' },
+        { lab:'replan 替换', val: hs.replanReplaced||0 },
+        { lab:'replan 剪枝', val: hs.replanPruned||0 },
+        { lab:'自愈记录', val: hs.entries||0 },
+      ]);
+      body.appendChild(mini);
+      const tasks = j.tasks || [];
+      if (!tasks.length){ body.appendChild(emptyBox('任务树为空（尚无任务被拆解）')); return; }
+      const ul = document.createElement('div'); ul.style.cssText='margin-top:10px';
+      for (const t of tasks){
+        const d2 = document.createElement('div'); d2.className='prow';
+        const st = t.status || '?';
+        const stMap = { done:'✓ 完成', active:'▶ 进行', blocked:'⛔ 阻塞', pending:'○ 待办', failed:'✗ 失败' };
+        const lc = document.createElement('span'); lc.className='l';
+        lc.innerHTML = '<b>' + esc(stMap[st] || st) + '</b>&nbsp; ' + esc(t.desc || t.id || '（无描述）');
+        const rc = document.createElement('span'); rc.className='r';
+        const hh = t.history || [];
+        rc.innerHTML = hh.length ? '<small title="' + esc(hh.map(h=>h.reason+'@'+h.status).join(' → ')) + '">自愈×' + hh.length + '</small>' : '';
+        d2.appendChild(lc); d2.appendChild(rc); ul.appendChild(d2);
+      }
+      body.appendChild(ul);
+      body.appendChild(emptyBox('注：exec-fail / replan 记录即「中途失败自愈」路径证据'));
+    })
+    .catch(err => {
+      body.textContent = '';
+      body.appendChild(emptyBox('⚠️ 任务树加载失败：' + esc(err.message) + '<br>该会话可能未运行过 Planner，或服务未连接'));
+    });
   return f;
 }
 

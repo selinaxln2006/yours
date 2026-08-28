@@ -25,6 +25,26 @@ export interface TaskNode {
   rounds?: number;
   toolCalls?: number;
   note?: string;
+  /**
+   * 【t3 失败自愈可追踪】任务生命周期历史快照（追加式，不覆盖）。
+   * 记录每次状态变更，尤其 re-plan 替换前被丢弃的 failed 任务原始信息
+   * （desc/note/rounds/toolCalls/时间戳）——G8 第三靶验收需证明
+   * 「中途失败自愈」真实发生，落盘的 task-tree.json 据此可查证。
+   * 断点续跑（loadTree）时随任务一并恢复。
+   */
+  history?: TaskHistoryEntry[];
+}
+
+/** 任务状态变更历史快照（t3 新增，最小数据层增量） */
+export interface TaskHistoryEntry {
+  ts: number;
+  status: TaskNode['status'];
+  desc?: string;
+  note?: string;
+  rounds?: number;
+  toolCalls?: number;
+  /** 触发该变更的原因（如 'exec-fail' | 'replan-replaced' | 'resume-retry'） */
+  reason?: string;
 }
 
 /** 任务树（落盘结构 = 断点续跑的状态文件） */
@@ -464,6 +484,7 @@ export class Planner {
         if (attempts < 2 && transient) continue;
         task.status = 'failed';
         task.note = msg.slice(0, 200);
+        task.history = [...(task.history ?? []), { ts: Date.now(), status: 'failed', note: task.note, reason: 'exec-fail' }];
         outcomes[task.id] = { status: 'failed', rounds: 0, toolCalls: 0, note: task.note };
         await this.saveTree(tree, ctx);
         return { done: false, aborted: false };
@@ -551,6 +572,7 @@ export class Planner {
               : '无产出反问（违反无人值守纪律）';
       task.status = 'failed';
       task.note = `${why} | ${note}`.slice(0, 300);
+      task.history = [...(task.history ?? []), { ts: Date.now(), status: 'failed', note: task.note, rounds: res.rounds, toolCalls: res.toolCalls, reason: 'exec-fail' }];
       outcomes[task.id] = { status: 'failed', rounds: res.rounds, toolCalls: res.toolCalls, note: task.note };
       await this.saveTree(tree, ctx);
       return { done: false, aborted: res.aborted };
@@ -609,6 +631,25 @@ export class Planner {
     }
     const merged = mergeReplan(tree, raw, this.opts.maxTasks);
     if (!merged) return false;
+    // 【t3 失败自愈可追踪】re-plan 替换前，把将被丢弃的非 done 任务快照进 history——
+    // mergeReplan 保留 done 任务、替换全部未完成（failed/pending）任务；这些任务
+    // 从 tree.tasks 消失后原始失败信息即丢失，故先追加历史供 G8 验收查证。
+    const mergedDoneIds = new Set(merged.tasks.filter((t) => t.status === 'done').map((t) => t.id));
+    const now = Date.now();
+    for (const t of tree.tasks) {
+      if (t.status === 'done' || mergedDoneIds.has(t.id)) continue; // 保留的任务不记
+      const hist: TaskHistoryEntry[] = t.history ?? [];
+      hist.push({
+        ts: now,
+        status: t.status,
+        desc: t.desc,
+        note: t.note,
+        rounds: t.rounds,
+        toolCalls: t.toolCalls,
+        reason: t.status === 'failed' ? 'replan-replaced' : 'replan-pruned',
+      });
+      t.history = hist;
+    }
     // 就地替换（外部引用同一对象；断点状态文件同步更新）
     tree.tasks = merged.tasks;
     tree.updatedAt = merged.updatedAt;

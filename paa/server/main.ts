@@ -781,6 +781,49 @@ async function main(): Promise<void> {
           return;
         }
       }
+      // ---- REST：Planner 任务树（G8 第三靶验收：查证「中途失败自愈」路径）----
+      // GET /api/tasks/:sid → 读取 runs/<sid>/task-tree.json（含 t3 的 history 字段），
+      // 并返回失败自愈追踪摘要（exec-fail / replan-replaced / replan-pruned 计数）
+      const taskIdMatch = /^\/api\/tasks\/([a-zA-Z0-9-]+)$/.exec(p);
+      if (taskIdMatch && req.method === 'GET') {
+        const tid = taskIdMatch[1];
+        try {
+          const raw = await readFile(
+            path.join(session.sessionDir(tid), 'task-tree.json'),
+            'utf8',
+          );
+          const tree = JSON.parse(raw) as {
+            goal?: string;
+            createdAt?: number;
+            updatedAt?: number;
+            tasks?: Array<{
+              id?: string;
+              desc?: string;
+              status?: string;
+              history?: Array<{ reason?: string; status?: string; ts?: number }>;
+            }>;
+          };
+          // 失败自愈追踪摘要（t3 数据层暴露给验收/前端）
+          const healSummary = {
+            execFail: 0,
+            replanReplaced: 0,
+            replanPruned: 0,
+            entries: 0,
+          };
+          for (const t of tree.tasks ?? []) {
+            for (const h of t.history ?? []) {
+              healSummary.entries++;
+              if (h.reason === 'exec-fail') healSummary.execFail++;
+              else if (h.reason === 'replan-replaced') healSummary.replanReplaced++;
+              else if (h.reason === 'replan-pruned') healSummary.replanPruned++;
+            }
+          }
+          sendJson(res, 200, { ok: true, goal: tree.goal, createdAt: tree.createdAt, updatedAt: tree.updatedAt, tasks: tree.tasks, healSummary });
+        } catch {
+          sendJson(res, 404, { error: `任务树不存在: ${tid}（runs/${tid}/task-tree.json）` });
+        }
+        return;
+      }
       // 单会话发消息（写入 store 并返回回复）
       const sessionMsgMatch = /^\/api\/sessions\/([a-zA-Z0-9-]+)\/messages$/.exec(p);
       if (sessionMsgMatch && req.method === 'POST') {
@@ -1001,8 +1044,7 @@ async function main(): Promise<void> {
   httpServer.listen(PORT, HOST, () => {
     console.log('╭──────────────────────────────────────────────╮');
     console.log('│  PAA Console Server                          │');
-    console.log(`│  入口     http://${HOST}:${PORT}/            │`);
-    console.log(`│  旧 PWA   http://${HOST}:${PORT}/app          │`);
+  console.log(`│  入口     http://${HOST}:${PORT}/            │`);
     console.log(`│  Autonomy L2（risk3 写操作推确认卡）          │`);
     console.log(`│  工具 ${pipeline.list().length} 个 · 包 ${loadedPkgs.map((l) => l.manifest.name).join(',') || '无'}              `);
     console.log('╰──────────────────────────────────────────────╯');
