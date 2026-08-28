@@ -1,8 +1,7 @@
 /* 枢 · 生活工作台 Service Worker —— 离线缓存应用外壳 */
-const CACHE = 'shu-workbench-v20';
+const CACHE = 'shu-workbench-v21';
 const ASSETS = [
   './',
-  './index.html',
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png'
@@ -39,8 +38,8 @@ self.addEventListener('fetch', (e) => {
         const copy = res.clone();
         caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
         return res;
-      }).catch(() =>
-        caches.match(req).then((hit) => hit || caches.match('./index.html'))
+      }      ).catch(() =>
+        caches.match(req).then((hit) => hit || caches.match('./console.html'))
       )
     );
     return;

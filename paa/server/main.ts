@@ -1,7 +1,7 @@
 // ============================================================
 // PAA Console Server — 主客反转架构的服务层（console-v1 路线 2）
 // 控制台（console.html）为主体：HTTP 静态 + REST + WS 推送 + chat
-// index.html（冻结的生活工作台 PWA）同源提供 → localStorage 一键迁移
+// index.html 已于 B3 退役（2026-08-28），console.html 是唯一前端宿主
 // 强约束落实：
 //   · 正确 API 分层（静态/数据/对话/迁移四层）
 //   · WS 从零实现（core/ws.ts，零 npm 依赖）
@@ -274,7 +274,6 @@ function sanitize(key: string, value: unknown): unknown {
 
 async function serveStatic(res: ServerResponse, urlPath: string): Promise<void> {
   let rel = urlPath === '/' || urlPath === '' ? 'console.html' : urlPath.slice(1);
-  if (rel === 'app') rel = 'index.html'; // 旧 PWA 入口保留
   const file = path.resolve(WORKSPACE_ROOT, rel);
   if (!file.startsWith(WORKSPACE_ROOT + path.sep) && file !== WORKSPACE_ROOT) {
     res.writeHead(403);

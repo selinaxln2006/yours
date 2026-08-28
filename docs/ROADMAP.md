@@ -283,7 +283,7 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 |---|------|------|
 | B1 | **服务自启 + 崩溃拉起** | Windows 计划任务，开机自启；进程死亡自动重启。彻底告别手动拉起 |
 | B2 | **会话持久化/多会话** | chatHistory 已落盘，多会话管理（新建/切换）未做——**与 T1 合并** |
-| B3 | **index.html 退役** | 俪宁实测 console 功能完备后删除，仓库瘦身 |
+| B3 | **index.html 退役** | ✅ **2026-08-28 已执行**：删除 index.html（112KB），清三处耦合（sw.js v21 移除缓存项+离线兜底改 console / serve.cjs 默认页改 console / server `/app` 路由摘除），验证 `/`→console 200、`/app`、`/index.html`→404，测试 76/76。依据 `docs/architecture/index-retirement-plan.md`（G8 第二靶产出） |
 | B4 | **push GitHub** | 本地已领先 origin 5 commits |
 | B5 | **前端美化** | design tokens 体系（高级感风格，待 A 线空档期做） |
 

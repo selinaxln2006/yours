@@ -61,7 +61,8 @@ docs/                       # 规划与架构文档
 ├── paa-design-v2.md        # 大脑设计
 ├── paa-host-evolution-v1.md# 宿主演进
 └── console-v1.md           # console 工程
-index.html / console.html   # 生活工作台 PWA（index 冻结，console 为主）
+index.html 已退役（B3，2026-08-28 删除，git 历史可回滚）
+console.html               # console 前端（唯一前端宿主）
 ```
 
 ---
@@ -101,7 +102,7 @@ node cli/main.ts --agent reviewer --once "审查 xx"    # 评审角色（只读�
 2. **最小修改**：只改必要处，不顺手重构；一次只做一件事
 3. **改后必验**：`npm run check` + 相关 `npm test` 必须过；大文件（>200 行）分段写（fs 骨架 + 追加）
 4. **长任务先建任务树**：模糊目标一律走 `--goal`（planner），不手动硬啃
-5. **冻结文件别碰**：`index.html`（PWA 已冻结）；`paa/config.json`（含密钥，只读）
+5. **冻结文件别碰**：`index.html` 已退役删除（别恢复，别 git add -f）；`paa/config.json`（含密钥，只读）
 6. **不入库**：`paa/runs|memory|artifacts|data`、`config.json` 都在 .gitignore，别 `git add -f`
 7. **提交规范**：commit message 用中文，作者邮箱 `182077080+selinaxln2006@users.noreply.github.com`（本地 git config 已设，别改）
 8. **G8 纪律**：没到"长程自主实测通过"前，任何人问"到 Codex 级了吗"，答案一律"没有"——包括 Codex 自己
