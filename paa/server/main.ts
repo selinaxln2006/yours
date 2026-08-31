@@ -53,7 +53,8 @@ function resolvePort(): number {
   return env > 0 && env < 65536 ? env : 8765;
 }
 const PORT = resolvePort();
-const HOST = '127.0.0.1';
+// 监听地址：默认仅本机；LAN 模式（手机端）在启动时根据 paa/data/lan.json 的 lan:true 提升为 0.0.0.0
+let HOST = '127.0.0.1';
 
 /** 每轮 LLM 往返上限（做大项目；PAA_MAX_ROUNDS 环境变量可调） */
 const MAX_ROUNDS = (() => {
@@ -130,6 +131,21 @@ async function loadLlmConfig(): Promise<LLMConfig | null> {
 interface SupabaseConfig {
   url: string;
   publishableKey: string;
+}
+
+interface LanConfig {
+  lan: boolean;
+  accessToken: string;
+}
+
+/** LAN 访问配置（paa/data/lan.json，gitignore 目录不入库）：lan:true → 绑 0.0.0.0；accessToken 非空 → /api 与 /ws 门禁 */
+async function loadLanConfig(): Promise<LanConfig> {
+  try {
+    const raw = JSON.parse(await readFile(path.join(PAA_ROOT, 'data', 'lan.json'), 'utf8')) as Partial<LanConfig>;
+    return { lan: !!raw.lan, accessToken: typeof raw.accessToken === 'string' ? raw.accessToken : '' };
+  } catch {
+    return { lan: false, accessToken: '' };
+  }
 }
 
 async function loadSupabaseConfig(): Promise<SupabaseConfig | null> {
@@ -302,6 +318,10 @@ async function main(): Promise<void> {
     console.error('❌ 未找到有效 paa/config.json（需要 apiUrl + apiKey）');
     process.exit(1);
   }
+
+  // ---- LAN 访问（手机端）：lan.json lan:true → 绑 0.0.0.0 + /api 与 /ws 门禁 ----
+  const lanCfg = await loadLanConfig();
+  if (lanCfg.lan) HOST = '0.0.0.0';
 
   // ---- S1：Supabase Auth（GitHub OAuth，PKCE）----
   const supabaseConfig = await loadSupabaseConfig();
@@ -544,6 +564,15 @@ async function main(): Promise<void> {
     console.log(`[http] ${req.method} ${p}${url.search ? '?' + url.search.slice(0, 80) : ''}`);
 
     try {
+      // ---- LAN 门禁：配置了 accessToken 时，/api/*（除 /api/auth/*）必须带 token（header 或 ?token=）----
+      if (lanCfg.accessToken && p.startsWith('/api/') && !p.startsWith('/api/auth/')) {
+        const tok = req.headers['x-access-token'] ?? url.searchParams.get('token') ?? '';
+        if (tok !== lanCfg.accessToken) {
+          sendJson(res, 403, { error: 'access denied' });
+          return;
+        }
+      }
+
       // ---- REST：健康 ----
       if (p === '/api/health' && req.method === 'GET') {
         sendJson(res, 200, {
@@ -1006,7 +1035,13 @@ async function main(): Promise<void> {
 
   // ---- WS upgrade ----
   httpServer.on('upgrade', (req, socket, head) => {
-    if (new URL(req.url ?? '/', `http://${HOST}:${PORT}`).pathname !== '/ws') {
+    const wsUrl = new URL(req.url ?? '/', `http://${HOST}:${PORT}`);
+    if (wsUrl.pathname !== '/ws') {
+      socket.destroy();
+      return;
+    }
+    // LAN 门禁：配置了 accessToken 时，/ws 必须带 ?token=（WebSocket 握手无法自定义 header）
+    if (lanCfg.accessToken && wsUrl.searchParams.get('token') !== lanCfg.accessToken) {
       socket.destroy();
       return;
     }

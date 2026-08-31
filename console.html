@@ -4,6 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>枢 · PAA Console</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#12141a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PAA">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -535,6 +541,29 @@ main{display:flex;min-height:0}
 <script>
 'use strict';
 /* ================================================================
+   LAN 访问令牌（可选）：server 侧 paa/data/lan.json 配置 accessToken 后，
+   所有 /api 请求自动带 x-access-token 头；403 时提示输入并重载。
+   ================================================================ */
+const PAA_TOKEN = (() => { try { return localStorage.getItem('paaToken') || ''; } catch { return ''; } })();
+{
+  const _fetch = window.fetch.bind(window);
+  window.fetch = async (input, init) => {
+    const u = typeof input === 'string' ? input : (input && input.url) || '';
+    if (PAA_TOKEN && u.includes('/api/')) {
+      init = init || {};
+      const h = new Headers(init.headers || {});
+      if (!h.has('x-access-token')) h.set('x-access-token', PAA_TOKEN);
+      init.headers = h;
+    }
+    const res = await _fetch(input, init);
+    if (res.status === 403 && u.includes('/api/') && !u.includes('/api/auth/')) {
+      const t = prompt('PAA 服务器需要访问令牌（paa/data/lan.json 的 accessToken）：');
+      if (t) { try { localStorage.setItem('paaToken', t); } catch { /* 忽略 */ } location.reload(); }
+    }
+    return res;
+  };
+}
+/* ================================================================
    枢 · PAA Console v1 — 状态驱动控制台
    数据主权在 Node 侧 JSON 文件；本页不落 localStorage（仅迁移按钮只读旧值）
    ================================================================ */
@@ -782,7 +811,7 @@ function inlineMd(src){
 function connect(){
   clearTimeout(S._reconn);
   const proto = location.protocol==='https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(proto + '://' + location.host + '/ws');
+  const ws = new WebSocket(proto + '://' + location.host + '/ws' + (PAA_TOKEN ? '?token=' + encodeURIComponent(PAA_TOKEN) : ''));
   S.ws = ws; renderHeader();
   ws.onopen = () => { S.connected = true; renderHeader(); pushSys('已连接 ' + location.host); };
   ws.onmessage = (e) => {
