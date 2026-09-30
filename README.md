@@ -1,8 +1,8 @@
-# 枢 · PAA（Personal AI Agent）
+# Yours · PAA（Personal AI Agent）
 
 > a personal ai agent on your desktop —— 跑在你自己电脑上的个人 AI agent。数据在你手里。
 
-枢是一个本地运行的 AI agent：它能读写你的文件、执行命令、记住关于你的事、管理你的生活数据（记账 / 体重饮食 / 养生打卡 / 日程 / 待办 / 目标），并能把一个模糊的大目标拆成任务树自主执行。你可以在终端里用它，也可以在任意浏览器（包括局域网里的手机）打开控制台用它。
+Yours 是一个本地运行的 AI agent：它能读写你的文件、执行命令、记住关于你的事、管理你的生活数据（记账 / 体重饮食 / 养生打卡 / 日程 / 待办 / 目标），并能把一个模糊的大目标拆成任务树自主执行。你可以在终端里用它，也可以在任意浏览器（包括局域网里的手机）打开控制台用它。
 
 ## 组成
 
@@ -14,10 +14,12 @@ paa/pkgs/      技能包（ToolPkg：manifest.json + impl.mjs），如 life 生�
 paa/cli/       宿主 1：终端（交互 / --once / --goal 长任务 / --resume 续跑）
 paa/server/    宿主 2：控制台服务（HTTP + REST + WebSocket），默认 127.0.0.1:8765
 console.html   控制台前端（chat 主区 + 生活面板，唯一前端）
+fonts/         控制台字体（本地打包，离线可用）
 ```
 
 - **零运行时依赖**：Node 直接运行 `.ts`（类型剥离），不需要构建；只有 `typescript` / `@types/node` 两个开发依赖。
 - **文件即数据**：记忆、产物、会话、生活数据都是 `paa/` 下的 JSON / JSONL 文件，全部在 `.gitignore` 里，不会进仓库。
+- **MCP**：`config.json` 的 `mcpServers` 挂任意 MCP server，工具按它声明的只读/破坏性自动定风险等级。已适配 Google 日历，见 [docs/CALENDAR-SETUP.md](docs/CALENDAR-SETUP.md)。
 - **可选云同步**：登录 GitHub（Supabase 托管）后多设备同步生活数据，见 [docs/SUPABASE-SETUP.md](docs/SUPABASE-SETUP.md)。
 
 ## 快速开始

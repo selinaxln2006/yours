@@ -39,6 +39,11 @@ import { SupabaseRealtime, type RealtimeState } from '../core/realtime.ts';
 import { checkRequestSource, generateAccessToken, redactSearch, tokenMatches } from './request-guard.ts';
 import { DemoAdapter, seedDemoData } from './demo.ts';
 import { turnMessages } from './turn.ts';
+import {
+  parseMcpServers, mcpToolDefinitions, connectMcpServers, findCalendarClient,
+  fetchCalendarEvents, isValidRange, isValidTimeZone, type CalendarEvent,
+} from './mcp.ts';
+import { sanitizeServerName, type McpServerConfig } from '../core/mcp-client.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PAA_ROOT = path.resolve(__dirname, '..');
@@ -72,7 +77,7 @@ const MAX_ROUNDS = (() => {
   return Number.isInteger(n) && n > 0 && n <= 200 ? n : 24;
 })();
 
-const SYSTEM_PROMPT = `你是枢（Shū），俪宁的跨界 AI 搭档，现在运行在生活工作台控制台里。锐利、直接、不谄媚；长内容用分级标题；默认简体中文；不说废话客套。
+const SYSTEM_PROMPT = `你是 Yours，俪宁的跨界 AI 搭档，现在运行在生活工作台控制台里。锐利、直接、不谄媚；长内容用分级标题；默认简体中文；不说废话客套。
 
 当前已注册工具（回答"你能做什么/能上网吗"时以此清单为准，逐项如实陈述；不夸大能力，也不自我设限——有 shell 和 web 工具就能联网，不要说"我没有网络"）：
 __TOOLS__
@@ -136,6 +141,17 @@ async function loadLlmConfig(): Promise<LLMConfig | null> {
     // 无配置
   }
   return null;
+}
+
+/** config.mcpServers；演示模式换成内置的演示日历 */
+async function loadMcpConfig(): Promise<McpServerConfig[]> {
+  if (DEMO) return [{ name: 'calendar', command: process.execPath, args: [path.join(__dirname, 'demo-calendar.mjs')] }];
+  try {
+    const raw = JSON.parse(await readFile(path.join(PAA_ROOT, 'config.json'), 'utf8')) as Record<string, unknown>;
+    return parseMcpServers(raw.mcpServers);
+  } catch {
+    return [];
+  }
 }
 
 interface SupabaseConfig {
@@ -286,6 +302,7 @@ const MIME: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
   '.png': 'image/png',
+  '.woff2': 'font/woff2',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
   '.webmanifest': 'application/manifest+json',
@@ -327,7 +344,8 @@ function isPublicAsset(rel: string): boolean {
   return (
     rel === 'console.html' ||
     rel === 'manifest.webmanifest' ||
-    /^icons\/[a-z0-9-]+\.png$/.test(rel)
+    /^icons\/[a-z0-9-]+\.png$/.test(rel) ||
+    /^fonts\/[a-z0-9-]+\.woff2$/.test(rel)
   );
 }
 
@@ -345,7 +363,8 @@ async function serveStatic(res: ServerResponse, urlPath: string): Promise<void> 
     const ext = path.extname(file).toLowerCase();
     res.writeHead(200, {
       'Content-Type': MIME[ext] ?? 'application/octet-stream',
-      'Cache-Control': 'no-store',
+      // 字体大且几乎不变：缓存一周；其余照旧不缓存
+      'Cache-Control': ext === '.woff2' ? 'public, max-age=604800' : 'no-store',
     });
     res.end(await readFile(file));
   } catch {
@@ -577,6 +596,21 @@ async function main(): Promise<void> {
     console.error(`工具包 ${name} 加载失败: ${why}`);
   }
 
+  // MCP：连接失败只打日志，不挡启动
+  const mcpCfgs = await loadMcpConfig();
+  const mcp = await connectMcpServers(mcpCfgs);
+  const mcpByName = new Map(mcpCfgs.map((c) => [c.name, c]));
+  for (const c of mcp.clients) {
+    for (const t of mcpToolDefinitions(c, mcpByName.get(c.name)?.risk)) pipeline.register(t);
+  }
+  for (const [name, why] of Object.entries(mcp.errors)) console.error(`MCP server ${name} 连接失败（已跳过）: ${why}`);
+  const closeMcp = (): void => { for (const c of mcp.clients) c.close(); };
+  process.on('exit', closeMcp);
+  for (const sig of ['SIGINT', 'SIGTERM'] as const) process.on(sig, () => process.exit(0));
+  const calClient = findCalendarClient(mcp.clients);
+  /** 日历读缓存：同一区间 60s 内不重复打 MCP */
+  const calCache = new Map<string, { at: number; events: CalendarEvent[] }>();
+
   const adapter = DEMO || !llmConfig ? new DemoAdapter() : createAdapter(llmConfig);
   const toolsDesc = pipeline
     .list()
@@ -586,7 +620,9 @@ async function main(): Promise<void> {
     adapter,
     pipeline,
     session,
-    systemPrompt: SYSTEM_PROMPT.replace('__TOOLS__', toolsDesc),
+    systemPrompt: SYSTEM_PROMPT.replace('__TOOLS__', toolsDesc) + (calClient
+      ? `\n\n日历：用户的真实日历通过 mcp_${sanitizeServerName(calClient.name)}_* 工具访问（Google 日历等）。问到安排时，本地日程（life_*）和日历都要看；往日历里加/改/删事件会推确认卡。`
+      : ''),
     memoryProvider: memory,
     maxRounds: MAX_ROUNDS,
   });
@@ -785,6 +821,35 @@ async function main(): Promise<void> {
           sendJson(res, 200, { ok: true, result, sync: syncInfo() });
         } catch (e) {
           sendJson(res, 502, { ok: false, error: e instanceof Error ? e.message : String(e), sync: syncInfo() });
+        }
+        return;
+      }
+
+      // ---- 日历（MCP list-events，只读）----
+      if (p === '/api/calendar' && req.method === 'GET') {
+        if (!calClient || !calClient.isConnected) {
+          sendJson(res, 404, { error: '未连接日历' });
+          return;
+        }
+        const from = url.searchParams.get('from') ?? '';
+        const to = url.searchParams.get('to') ?? from;
+        const tz = url.searchParams.get('tz') ?? '';
+        if (!isValidRange(from, to) || (tz && !isValidTimeZone(tz))) {
+          sendJson(res, 400, { error: '参数不合法（from/to: YYYY-MM-DD，最多 62 天；tz: IANA 时区）' });
+          return;
+        }
+        const key = `${from}|${to}|${tz}`;
+        const hit = calCache.get(key);
+        if (hit && Date.now() - hit.at < 60_000) {
+          sendJson(res, 200, { source: calClient.name, events: hit.events });
+          return;
+        }
+        try {
+          const events = await fetchCalendarEvents(calClient, from, to, tz || undefined);
+          calCache.set(key, { at: Date.now(), events });
+          sendJson(res, 200, { source: calClient.name, events });
+        } catch (e) {
+          sendJson(res, 502, { error: e instanceof Error ? e.message : String(e) });
         }
         return;
       }
@@ -1148,6 +1213,8 @@ async function main(): Promise<void> {
       risks: Object.fromEntries(pipeline.list().map((t) => [t.name, t.risk])),
       demo: DEMO,
       pkgs: loadedPkgs.map((lp) => lp.manifest.name),
+      mcp: mcp.clients.map((c) => ({ name: c.name, tools: c.tools.length })),
+      calendar: calClient ? calClient.name : null,
     });
     console.log(`[ws] 控制台已连接（${connections.size} 个）`);
   });
@@ -1166,11 +1233,12 @@ async function main(): Promise<void> {
 
   httpServer.listen(PORT, HOST, () => {
     console.log('╭──────────────────────────────────────────────╮');
-    console.log('│  PAA Console Server                          │');
+    console.log('│  Yours · PAA Console Server                  │');
   console.log(`│  入口     http://${HOST}:${PORT}/            │`);
     console.log(`│  Autonomy L2（risk3 写操作推确认卡）          │`);
     if (DEMO) console.log(`│  演示模式：脚本化回复，数据在 ${DATA_ROOT}`);
     console.log(`│  工具 ${pipeline.list().length} 个 · 包 ${loadedPkgs.map((l) => l.manifest.name).join(',') || '无'}              `);
+    if (mcp.clients.length) console.log(`│  MCP ${mcp.clients.map((c) => `${c.name}(${c.tools.length})`).join(', ')}${calClient ? ` · 日历：${calClient.name}` : ''}`);
     console.log('╰──────────────────────────────────────────────╯');
   });
 }
