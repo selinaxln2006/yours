@@ -194,10 +194,14 @@ const connections = new Set<WsConnection>();
 interface PendingConfirm {
   resolve: (ok: boolean) => void;
   timer: ReturnType<typeof setTimeout>;
+  /** 发起确认的工具名（"总是允许"以此为准，不信任客户端回传的 tool 字段） */
+  tool?: string;
 }
 const pendingConfirms = new Map<string, PendingConfirm>();
 /** 会话级放行（所有连接共享；单用户本地场景） */
 const trustedTools = new Set<string>();
+/** 能否被"总是允许"：risk 4 危险工具永远逐次确认（权限红线）。main() 里注入真实判定 */
+let isTrustable: (tool: string) => boolean = () => false;
 
 function broadcast(obj: unknown): void {
   for (const c of connections) c.sendJson(obj);
@@ -215,7 +219,7 @@ function askOverWs(prompt: string, toolName?: string): Promise<boolean> {
       broadcast({ type: 'confirm_timeout', id });
       resolve(false);
     }, CONFIRM_TIMEOUT_MS);
-    pendingConfirms.set(id, { resolve, timer });
+    pendingConfirms.set(id, { resolve, timer, tool: toolName });
     broadcast({ type: 'confirm', id, tool: toolName ?? '?', prompt, connections: connections.size });
     if (connections.size === 0) {
       // 没有控制台连着：直接拒绝（安全默认）
@@ -226,18 +230,24 @@ function askOverWs(prompt: string, toolName?: string): Promise<boolean> {
   });
 }
 
+/** 应答一张确认卡（WS 消息与 POST /api/confirm 共用）。返回是否找到对应的待确认项 */
+function answerConfirm(id: string, ok: boolean, always: boolean): boolean {
+  const p = pendingConfirms.get(id);
+  if (!p) return false;
+  pendingConfirms.delete(id);
+  clearTimeout(p.timer);
+  if (ok && always && p.tool && isTrustable(p.tool)) {
+    trustedTools.add(p.tool);
+    broadcast({ type: 'trusted', tool: p.tool });
+  }
+  broadcast({ type: 'confirm_done', id, ok });
+  p.resolve(ok);
+  return true;
+}
+
 function handleWsMessage(conn: WsConnection, msg: WsMessage): void {
   if (msg.type === 'confirm' && typeof msg.id === 'string') {
-    const p = pendingConfirms.get(msg.id);
-    if (!p) return;
-    pendingConfirms.delete(msg.id);
-    clearTimeout(p.timer);
-    const ok = msg.ok === true;
-    if (ok && msg.always === true && typeof msg.tool === 'string') {
-      trustedTools.add(msg.tool);
-      broadcast({ type: 'trusted', tool: msg.tool });
-    }
-    p.resolve(ok);
+    answerConfirm(msg.id, msg.ok === true, msg.always === true);
     return;
   }
   if (msg.type === 'ping') {
@@ -529,6 +539,7 @@ async function main(): Promise<void> {
   };
   const permission = new Permission(2); // 默认 L2：读自动，写确认（控制台可视调节）
   const pipeline = new ToolPipeline(permission);
+  isTrustable = (tool) => (pipeline.get(tool)?.risk ?? 4) < 4;
   for (const t of createCoreTools(WORKSPACE_ROOT)) pipeline.register(t);
   for (const t of createMemoryTools(memory)) pipeline.register(t);
   for (const t of createArtifactTools(artifacts)) pipeline.register(t);
@@ -1041,6 +1052,18 @@ async function main(): Promise<void> {
             res.end();
           }
         }
+        return;
+      }
+
+      // ---- REST：确认卡应答（console.html 的"允许/拒绝/总是允许"按钮走这里）----
+      if (p === '/api/confirm' && req.method === 'POST') {
+        const body = JSON.parse((await readBody(req)).toString('utf8')) as { id?: unknown; ok?: unknown; always?: unknown };
+        if (typeof body.id !== 'string') {
+          sendJson(res, 400, { error: 'id 必填' });
+          return;
+        }
+        const found = answerConfirm(body.id, body.ok === true, body.always === true);
+        sendJson(res, found ? 200 : 404, found ? { ok: true } : { error: '确认已超时或不存在' });
         return;
       }
 

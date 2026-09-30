@@ -267,11 +267,17 @@ async function main(): Promise<void> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   // 会话级放行集合：a=always allow 加入，重启清除
   const trustedTools = new Set<string>();
+  // risk 4 危险工具不可会话级放行（权限红线：永远逐次确认）；pipeline 建好后注入真实判定
+  let isTrustable: (tool: string) => boolean = () => false;
   const ask = async (p: string, toolName?: string): Promise<boolean> => {
     if (yes) return true; // --yes：非交互全自动（脚本/测试/长任务实测）
     if (toolName && trustedTools.has(toolName)) return true;
     const a = (await rl.question(render.ask(p) + ' (y/n/a) ')).trim().toLowerCase();
     if (a === 'a' && toolName) {
+      if (!isTrustable(toolName)) {
+        console.log(render.status(`${toolName} 是危险操作，只放行这一次，下次仍会询问`));
+        return true;
+      }
       trustedTools.add(toolName);
       console.log(render.status(`会话级放行 ${toolName}，本次不再询问（/trust 查看，重启清除）`));
       return true;
@@ -304,6 +310,7 @@ async function main(): Promise<void> {
   // G5：全局 FORBID 名单（config.forbiddenTools，硬拒绝，任何 Autonomy 不可放行）
   for (const f of config.forbiddenTools) permission.forbid(f);
   const pipeline = new ToolPipeline(permission);
+  isTrustable = (tool) => (pipeline.get(tool)?.risk ?? 4) < 4;
   for (const t of createCoreTools(root)) pipeline.register(t);
   for (const t of createMemoryTools(memory)) pipeline.register(t);
   for (const t of createArtifactTools(artifacts)) pipeline.register(t);

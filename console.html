@@ -854,6 +854,10 @@ function handleWs(m){
     case 'confirm_timeout':
       if (S.confirm && S.confirm.id === m.id){ S.confirm = null; clearInterval(S.confirmTimer); renderConfirm(); toast('操作超时，已拒绝'); }
       break;
+    case 'confirm_done':
+      // 另一端（手机/另一个标签页）已应答：关掉本端的同一张卡
+      if (S.confirm && S.confirm.id === m.id){ S.confirm = null; clearInterval(S.confirmTimer); renderConfirm(); }
+      break;
     case 'trusted':
       if (S.confirm && S.confirm.id === m.id){ S.confirm = null; clearInterval(S.confirmTimer); renderConfirm(); }
       toast('已放行工具 · ' + (m.tool || '')); break;
