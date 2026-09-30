@@ -62,11 +62,16 @@ export function makeTitle(text: string): string {
  *  与 console.html 的 S.msgs 结构对齐，切换会话可完整还原画布。 */
 export function messagesToUiHistory(messages: ChatMessage[]): UiMsg[] {
   const out: UiMsg[] = [];
+  // tool 结果消息只带 toolCallId，参数在前面 assistant 的 toolCalls 里：先建索引，还原时工具卡才看得到"记了什么"
+  const argsById = new Map<string, unknown>();
+  for (const m of messages) for (const tc of m.toolCalls ?? []) argsById.set(tc.id, tc.arguments);
   for (const m of messages) {
     if (m.role === 'user') {
       out.push({ kind: 'user', text: m.content ?? '', ts: Date.now() });
     } else if (m.role === 'assistant') {
-      out.push({ kind: 'assistant', text: m.content ?? '', mode: null, ts: Date.now() });
+      // 只有工具调用、没有文字的轮次不产生空气泡；首行 [MODE:xxx] 标记与实时渲染一致地剥离
+      const text = (m.content ?? '').replace(/^\s*\[MODE:[a-z-]+\]\s*/, '');
+      if (text.trim()) out.push({ kind: 'assistant', text, mode: null, ts: Date.now() });
     } else if (m.role === 'tool') {
       // ChatMessage.tool.content = JSON 字符串（可能含截断的 result）
       let result: unknown = m.content;
@@ -79,7 +84,7 @@ export function messagesToUiHistory(messages: ChatMessage[]): UiMsg[] {
       out.push({
         kind: 'tool',
         toolName: m.name ?? '',
-        args: undefined,
+        args: m.toolCallId ? argsById.get(m.toolCallId) : undefined,
         result: r.error !== undefined ? undefined : r.data,
         err: r.error,
         state: r.error !== undefined ? 'err' : 'ok',

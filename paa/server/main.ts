@@ -1036,6 +1036,8 @@ async function main(): Promise<void> {
               broadcast({ type: 'event', ev });
             },
           });
+          // 与 /api/chat 一致：落盘本轮轨迹（此前 console 的流式对话从不保存，刷新/切会话即丢失）
+          await chatStore.append(chatSession.id, result.messages ?? [], messagesToUiHistory(result.messages ?? []));
           chatSession.messages = (chatSession.messages ?? []).concat(result.messages ?? []).slice(-MAX_HISTORY);
           return result;
         });
