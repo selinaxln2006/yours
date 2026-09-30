@@ -431,6 +431,16 @@ main{display:flex;min-height:0}
 </style>
 </head>
 <body>
+<style>
+/* 今日概览卡片区（紧凑横排，不占主工作区） */
+#overview.ovw{display:flex;gap:10px;padding:8px 14px;border-bottom:1px solid rgba(255,255,255,.08);flex:0 0 auto;flex-wrap:wrap;background:rgba(0,0,0,.12)}
+#overview.ovw .ovw-card{flex:1 1 150px;min-width:130px;max-width:230px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:2px}
+#overview.ovw .ovw-k{font-size:11px;opacity:.6;letter-spacing:.02em}
+#overview.ovw .ovw-v{font-size:22px;font-weight:700;line-height:1.1}
+#overview.ovw .ovw-v.ovw-tags{font-size:13px;font-weight:600;word-break:break-word}
+#overview.ovw .ovw-s{font-size:10px;opacity:.5}
+#overview.ovw .ovw-err{opacity:.7;font-weight:400}
+</style>
 <div id="app">
   <header>
     <div class="brand">
@@ -453,6 +463,13 @@ main{display:flex;min-height:0}
       <span class="badge off" id="authBadge" title="GitHub 登录（云端同步）" style="cursor:pointer">登录</span>
     </div>
   </header>
+  <section id="overview" class="ovw" aria-label="今日概览">
+    <div class="ovw-card" data-k="sessions"><div class="ovw-k">今日活跃会话</div><div class="ovw-v" id="ovSessions">—</div><div class="ovw-s">session 计数</div></div>
+    <div class="ovw-card" data-k="tasks"><div class="ovw-k">今日任务</div><div class="ovw-v" id="ovTasks">—</div><div class="ovw-s" id="ovTasksSub">待办 / 进行中 / 已完成</div></div>
+    <div class="ovw-card" data-k="schedule"><div class="ovw-k">今日日程</div><div class="ovw-v" id="ovSchedule">—</div><div class="ovw-s">schedule 条目</div></div>
+    <div class="ovw-card" data-k="memory"><div class="ovw-k">24h 高频标签</div><div class="ovw-v ovw-tags" id="ovMemory">—</div><div class="ovw-s">memory tag</div></div>
+    <div class="ovw-card" data-k="sync"><div class="ovw-k">同步状态</div><div class="ovw-v" id="ovSync">—</div><div class="ovw-s" id="ovSyncSub">dirty / last sync</div></div>
+  </section>
   <main>
     <section id="chat">
       <div class="rail" data-expand="chat">航迹日志 · 点击展开</div>
@@ -542,9 +559,18 @@ main{display:flex;min-height:0}
 'use strict';
 /* ================================================================
    LAN 访问令牌（可选）：server 侧 paa/data/lan.json 配置 accessToken 后，
-   所有 /api 请求自动带 x-access-token 头；403 时提示输入并重载。
+   所有 /api 请求自动带 x-access-token 头；403 时提示输入并写 cookie，
+   下次自动从 HttpOnly cookie 读取（HttpOnly 防 JS 偷，7 天免输）。
    ================================================================ */
 const PAA_TOKEN = (() => { try { return localStorage.getItem('paaToken') || ''; } catch { return ''; } })();
+/** 写 HttpOnly cookie（手机端/重复访问场景：输一次免输 7 天） */
+function rememberLanToken(token) {
+  return fetch('/api/lan/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  }).catch(() => null);
+}
 {
   const _fetch = window.fetch.bind(window);
   window.fetch = async (input, init) => {
@@ -556,9 +582,13 @@ const PAA_TOKEN = (() => { try { return localStorage.getItem('paaToken') || ''; 
       init.headers = h;
     }
     const res = await _fetch(input, init);
-    if (res.status === 403 && u.includes('/api/') && !u.includes('/api/auth/')) {
-      const t = prompt('PAA 服务器需要访问令牌（paa/data/lan.json 的 accessToken）：');
-      if (t) { try { localStorage.setItem('paaToken', t); } catch { /* 忽略 */ } location.reload(); }
+    if (res.status === 403 && u.includes('/api/') && !u.includes('/api/auth/') && !u.includes('/api/lan/')) {
+      const t = prompt('PAA 服务器需要访问令牌（paa/data/lan.json 的 accessToken）：\n（输入后 7 天内自动免输）');
+      if (t) {
+        try { localStorage.setItem('paaToken', t); } catch { /* 忽略 */ }
+        await rememberLanToken(t);
+        location.reload();
+      }
     }
     return res;
   };
@@ -2258,6 +2288,48 @@ function init(){
   checkAuth();            // S1：登录态徽标
 }
 init();
+
+/* ============ 今日概览卡片渲染（GET /api/overview） ============ */
+function renderOverview(d) {
+  const $ = id => document.getElementById(id);
+  const set = (id, v, cls) => { const el = $(id); if (el) { el.textContent = v; if (cls) el.className = cls; } };
+  // sessions
+  set('ovSessions', (d && d.sessions && typeof d.sessions.activeToday === 'number') ? d.sessions.activeToday : '0');
+  // tasks
+  if (d && d.tasks) {
+    const t = d.tasks;
+    set('ovTasks', (t.pending + t.running + t.done) || 0);
+    set('ovTasksSub', '待办 ' + (t.pending||0) + ' · 进行 ' + (t.running||0) + ' · 完成 ' + (t.done||0));
+  } else { set('ovTasks', '0'); set('ovTasksSub', '待办 / 进行中 / 已完成'); }
+  // schedule
+  if (d && d.schedule && Array.isArray(d.schedule.items)) set('ovSchedule', d.schedule.items.length);
+  else if (d && d.schedule && typeof d.schedule.count === 'number') set('ovSchedule', d.schedule.count);
+  else set('ovSchedule', '0');
+  // memory tags
+  if (d && d.memory && Array.isArray(d.memory.topTags) && d.memory.topTags.length) {
+    set('ovMemory', d.memory.topTags.slice(0,3).map(x => '#' + x.tag).join(' '), 'ovw-v ovw-tags');
+  } else set('ovMemory', '—', 'ovw-v ovw-tags');
+  // sync
+  if (d && d.sync) {
+    const s = d.sync;
+    const dirty = typeof s.dirty === 'number' ? s.dirty : 0;
+    set('ovSync', dirty > 0 ? dirty + ' 待同步' : '已同步');
+    set('ovSyncSub', s.lastSyncAt ? '上次 ' + new Date(s.lastSyncAt).toLocaleTimeString() : '—');
+  } else { set('ovSync', '—'); set('ovSyncSub', 'dirty / last sync'); }
+}
+function loadOverview() {
+  fetch('/api/overview')
+    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(d => renderOverview(d))
+    .catch(() => {
+      // 降级占位
+      const fallback = '概览暂不可用';
+      ['ovSessions','ovTasks','ovSchedule','ovMemory','ovSync'].forEach(id => {
+        const el = document.getElementById(id); if (el) { el.textContent = fallback; el.className = 'ovw-err'; }
+      });
+    });
+}
+loadOverview();
 </script>
 </body>
 </html>

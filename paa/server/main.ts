@@ -564,10 +564,14 @@ async function main(): Promise<void> {
     console.log(`[http] ${req.method} ${p}${url.search ? '?' + url.search.slice(0, 80) : ''}`);
 
     try {
-      // ---- LAN 门禁：配置了 accessToken 时，/api/*（除 /api/auth/*）必须带 token（header 或 ?token=）----
-      if (lanCfg.accessToken && p.startsWith('/api/') && !p.startsWith('/api/auth/')) {
-        const tok = req.headers['x-access-token'] ?? url.searchParams.get('token') ?? '';
-        if (tok !== lanCfg.accessToken) {
+      // ---- LAN 门禁：配置了 accessToken 时，/api/*（除 /api/auth/* 和 /api/lan/token 写入端点）必须带 token（header / ?token= / cookie 三选一）----
+      // cookie 路径（paa_lan_token，HttpOnly 7 天）= 一次性输完免输的体验，由 console.html / mobile.html 写入
+      if (lanCfg.accessToken && p.startsWith('/api/') && !p.startsWith('/api/auth/') && !p.startsWith('/api/lan/')) {
+        const headerTok = req.headers['x-access-token'] ?? '';
+        const queryTok = url.searchParams.get('token') ?? '';
+        const cookieTok = getCookie(req, 'paa_lan_token') ?? '';
+        const tok = typeof headerTok === 'string' ? headerTok : (Array.isArray(headerTok) ? headerTok[0] : '');
+        if (tok !== lanCfg.accessToken && queryTok !== lanCfg.accessToken && cookieTok !== lanCfg.accessToken) {
           sendJson(res, 403, { error: 'access denied' });
           return;
         }
@@ -586,6 +590,81 @@ async function main(): Promise<void> {
           auth: auth ? 'ready' : 'disabled',
           sync: syncInfo(),
         });
+        return;
+      }
+
+      // ---- REST：今日概览聚合（console/mobile 顶部卡片共用：GET 一次拿齐今日数据）----
+      if (p === '/api/overview' && req.method === 'GET') {
+        const now = Date.now();
+        const dayStart = new Date();
+        dayStart.setHours(0, 0, 0, 0);
+        const d0 = dayStart.getTime();
+        // 本地时区今天 YYYY-MM-DD（对齐 life-store today()）
+        const tStr = dayStart.getFullYear() + '-' + String(dayStart.getMonth() + 1).padStart(2, '0') + '-' + String(dayStart.getDate()).padStart(2, '0');
+
+        // sessions：今日活跃（updatedAt >= 今日零点）
+        const sessions = chatStore.list();
+        const activeToday = sessions.filter((s) => s.updatedAt >= d0).length;
+
+        // tasks(todos)：dueDate 归属今日 → 待办/已完成计数
+        const todos = ((lifeStore.get('todos') as Array<Record<string, unknown>> | undefined) ?? []);
+        const todosToday = todos.filter((x) => String((x as { dueDate?: string }).dueDate ?? '').slice(0, 10) === tStr);
+        const done = todosToday.filter((x) => !!(x as { done?: boolean }).done).length;
+        const pending = todosToday.length - done;
+
+        // schedule：date 归属今日的条目
+        const schedule = ((lifeStore.get('schedule') as Array<Record<string, unknown>> | undefined) ?? []);
+        const todaySchedule = schedule.filter((x) => String((x as { date?: string }).date ?? '').slice(0, 10) === tStr);
+
+        // memory：最近 24h 有效记录 → 高频 tag（按 createdAt 过滤 + 排除已失效）
+        const recs = await memory.list();
+        const cutoff = now - 24 * 3600 * 1000;
+        const rec24 = recs.filter((r) => r.createdAt >= cutoff && !r.invalidAt);
+        const tagCount: Record<string, number> = {};
+        for (const r of rec24) for (const t of (r.tags ?? [])) tagCount[t] = (tagCount[t] ?? 0) + 1;
+        const topTags = Object.entries(tagCount)
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 6)
+          .map(([tag, count]) => ({ tag, count }));
+
+        const sync = syncInfo();
+        sendJson(res, 200, {
+          sync: { dirty: sync.dirty, lastSyncAt: sync.lastSync },
+          sessions: { activeToday },
+          tasks: { today: todosToday.length, pending, running: 0, done },
+          schedule: { today: todaySchedule.length, items: todaySchedule.slice(0, 8).map((x) => ({ title: (x as { title?: string }).title ?? '', startTime: (x as { startTime?: string }).startTime ?? '', category: (x as { category?: string }).category ?? '' })) },
+          memory: { total24h: rec24.length, tags24h: topTags },
+          generatedAt: now,
+        });
+        return;
+      }
+
+      // ---- LAN 令牌写 cookie（手机端 / 一次性输完免输体验）：POST /api/lan/token { token } ----
+      if (p === '/api/lan/token' && req.method === 'POST') {
+        if (!lanCfg.accessToken) {
+          sendJson(res, 404, { error: '未配置 accessToken' });
+          return;
+        }
+        const body = JSON.parse((await readBody(req, 4096)).toString('utf8')) as { token?: string };
+        if (typeof body.token !== 'string' || body.token !== lanCfg.accessToken) {
+          sendJson(res, 403, { error: 'token 不匹配' });
+          return;
+        }
+        res.writeHead(200, {
+          'Content-Type': 'application/json; charset=utf-8',
+          // HttpOnly 防 JS 偷；SameSite=Lax 允许跨站 GET；7 天有效
+          'Set-Cookie': `paa_lan_token=${encodeURIComponent(body.token)}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${7 * 24 * 3600}`,
+        });
+        res.end('{"ok":true}');
+        return;
+      }
+      // ---- LAN 令牌清 cookie（注销/换设备）：DELETE /api/lan/token ----
+      if (p === '/api/lan/token' && req.method === 'DELETE') {
+        res.writeHead(200, {
+          'Content-Type': 'application/json; charset=utf-8',
+          'Set-Cookie': 'paa_lan_token=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0',
+        });
+        res.end('{"ok":true}');
         return;
       }
 
@@ -1040,10 +1119,25 @@ async function main(): Promise<void> {
       socket.destroy();
       return;
     }
-    // LAN 门禁：配置了 accessToken 时，/ws 必须带 ?token=（WebSocket 握手无法自定义 header）
-    if (lanCfg.accessToken && wsUrl.searchParams.get('token') !== lanCfg.accessToken) {
-      socket.destroy();
-      return;
+    // LAN 门禁：配置了 accessToken 时，/ws 必须带 token（?token= 或 paa_lan_token cookie）
+    if (lanCfg.accessToken) {
+      const queryTok = wsUrl.searchParams.get('token') ?? '';
+      const cookieTok = (() => {
+        const raw = req.headers.cookie;
+        if (!raw) return '';
+        for (const part of raw.split(';')) {
+          const eq = part.indexOf('=');
+          if (eq < 0) continue;
+          const k = part.slice(0, eq).trim();
+          const v = part.slice(eq + 1).trim();
+          if (k === 'paa_lan_token') return decodeURIComponent(v);
+        }
+        return '';
+      })();
+      if (queryTok !== lanCfg.accessToken && cookieTok !== lanCfg.accessToken) {
+        socket.destroy();
+        return;
+      }
     }
     const conn = acceptUpgrade(req, socket);
     if (!conn) return;

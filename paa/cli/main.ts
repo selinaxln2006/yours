@@ -19,6 +19,7 @@ import { FileArtifactProvider } from '../core/artifact-provider.ts';
 import { PkgLoader } from '../core/pkg-loader.ts';
 import { McpClient, createMcpToolDefinitions, type McpServerConfig } from '../core/mcp-client.ts';
 import { createCoreTools } from '../tools/core-tools.ts';
+import { createSvcTools } from '../tools/svc-tools.ts';
 import { createMemoryTools } from '../tools/memory-tools.ts';
 import { createArtifactTools } from '../tools/artifact-tools.ts';
 import { createPkgTools } from '../tools/pkg-tools.ts';
@@ -305,6 +306,7 @@ async function main(): Promise<void> {
   for (const f of config.forbiddenTools) permission.forbid(f);
   const pipeline = new ToolPipeline(permission);
   for (const t of createCoreTools(root)) pipeline.register(t);
+  for (const t of createSvcTools(root)) pipeline.register(t);
   for (const t of createMemoryTools(memory)) pipeline.register(t);
   for (const t of createArtifactTools(artifacts)) pipeline.register(t);
 
