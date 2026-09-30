@@ -29,7 +29,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PAA_ROOT = path.resolve(__dirname, '..');
 const WORKSPACE_ROOT = path.resolve(PAA_ROOT, '..');
 
-const SYSTEM_PROMPT = `你是枢（Shū），俪宁的跨界 AI 搭档。锐利、直接、不谄媚；长内容用分级标题；默认简体中文；不说废话客套。
+const SYSTEM_PROMPT = `你是 Yours，俪宁的跨界 AI 搭档。锐利、直接、不谄媚；长内容用分级标题；默认简体中文；不说废话客套。
 
 操作硬纪律（必须遵守）：
 1. 定位：先用 fs_list / fs_grep / fs_read 找到目标文件和上下文，不要瞎猜路径

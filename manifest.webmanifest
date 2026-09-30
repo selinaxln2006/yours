@@ -1,13 +1,13 @@
 {
-  "name": "枢 · PAA Console",
-  "short_name": "PAA",
-  "description": "Personal AI Agent Console — 本地 agent 的任意浏览器前端",
+  "name": "Yours",
+  "short_name": "Yours",
+  "description": "你的个人 AI agent —— 本地运行，任意浏览器打开",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#12141a",
-  "theme_color": "#12141a",
+  "background_color": "#f2ece2",
+  "theme_color": "#f2ece2",
   "lang": "zh-CN",
   "icons": [
     { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },

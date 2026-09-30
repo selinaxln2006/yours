@@ -72,7 +72,7 @@ const MAX_ROUNDS = (() => {
   return Number.isInteger(n) && n > 0 && n <= 200 ? n : 24;
 })();
 
-const SYSTEM_PROMPT = `你是枢（Shū），俪宁的跨界 AI 搭档，现在运行在生活工作台控制台里。锐利、直接、不谄媚；长内容用分级标题；默认简体中文；不说废话客套。
+const SYSTEM_PROMPT = `你是 Yours，俪宁的跨界 AI 搭档，现在运行在生活工作台控制台里。锐利、直接、不谄媚；长内容用分级标题；默认简体中文；不说废话客套。
 
 当前已注册工具（回答"你能做什么/能上网吗"时以此清单为准，逐项如实陈述；不夸大能力，也不自我设限——有 shell 和 web 工具就能联网，不要说"我没有网络"）：
 __TOOLS__
@@ -286,6 +286,7 @@ const MIME: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
   '.png': 'image/png',
+  '.woff2': 'font/woff2',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
   '.webmanifest': 'application/manifest+json',
@@ -327,7 +328,8 @@ function isPublicAsset(rel: string): boolean {
   return (
     rel === 'console.html' ||
     rel === 'manifest.webmanifest' ||
-    /^icons\/[a-z0-9-]+\.png$/.test(rel)
+    /^icons\/[a-z0-9-]+\.png$/.test(rel) ||
+    /^fonts\/[a-z0-9-]+\.woff2$/.test(rel)
   );
 }
 
@@ -345,7 +347,8 @@ async function serveStatic(res: ServerResponse, urlPath: string): Promise<void> 
     const ext = path.extname(file).toLowerCase();
     res.writeHead(200, {
       'Content-Type': MIME[ext] ?? 'application/octet-stream',
-      'Cache-Control': 'no-store',
+      // 字体大且几乎不变：缓存一周；其余照旧不缓存
+      'Cache-Control': ext === '.woff2' ? 'public, max-age=604800' : 'no-store',
     });
     res.end(await readFile(file));
   } catch {
@@ -1166,7 +1169,7 @@ async function main(): Promise<void> {
 
   httpServer.listen(PORT, HOST, () => {
     console.log('╭──────────────────────────────────────────────╮');
-    console.log('│  PAA Console Server                          │');
+    console.log('│  Yours · PAA Console Server                  │');
   console.log(`│  入口     http://${HOST}:${PORT}/            │`);
     console.log(`│  Autonomy L2（risk3 写操作推确认卡）          │`);
     if (DEMO) console.log(`│  演示模式：脚本化回复，数据在 ${DATA_ROOT}`);

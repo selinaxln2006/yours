@@ -20,7 +20,7 @@ export const render = {
   banner(): string {
     return [
       `${C.cyan}┌─────────────────────────────────────────────┐${C.reset}`,
-      `${C.cyan}│${C.reset}  ${C.bold}PAA v2${C.reset} — Personal AI Agent Framework`,
+      `${C.cyan}│${C.reset}  ${C.bold}Yours${C.reset} — Personal AI Agent（PAA v2）`,
       `${C.cyan}│${C.reset}  ${C.dim}大脑层自研 · 参考 DSH/Operit/TencentDB 设计思想${C.reset}`,
       `${C.cyan}└─────────────────────────────────────────────┘${C.reset}`,
       '',
@@ -32,7 +32,7 @@ export const render = {
   },
 
   assistant(text: string): string {
-    return `${C.green}${C.bold}枢 ›${C.reset} ${text}`;
+    return `${C.green}${C.bold}Yours ›${C.reset} ${text}`;
   },
 
   toolCard(name: string, args: Record<string, unknown>, result: { ok: boolean; data?: unknown; error?: string }): string {

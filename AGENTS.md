@@ -65,6 +65,7 @@ docs/                       # 规划与架构文档
 └── console-v1.md           # console 工程
 index.html 已退役（B3，2026-08-28 删除，git 历史可回滚）
 console.html               # console 前端（唯一前端宿主）
+fonts/                     # console 字体（woff2 子集，OFL，离线可用；见 fonts/README.md）
 ```
 
 ---

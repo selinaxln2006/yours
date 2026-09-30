@@ -146,7 +146,7 @@ export class DemoAdapter implements LLMAdapter {
     if (results.length) {
       const failed = results.filter((m) => /"ok"\s*:\s*false/.test(m.content ?? ''));
       const done = results.length - failed.length;
-      const lines = [done ? `记好了 ✅ 共 ${done} 项，右边「今天」已经更新。` : '这次什么都没记下。'];
+      const lines = [done ? `记好了 ✅ 共 ${done} 项，「今天」已经更新。` : '这次什么都没记下。'];
       if (failed.length) lines.push(`有 ${failed.length} 项没执行（被拒绝或失败），需要的话换个说法再试。`);
       return { role: 'assistant', content: lines.join('\n') };
     }

@@ -12,15 +12,17 @@
 <meta name="apple-mobile-web-app-title" content="Yours">
 <link rel="apple-touch-icon" href="/icons/icon-192.png">
 <link rel="icon" href="/icons/icon-192.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,400;1,500&family=Noto+Serif+SC:wght@400;600&display=swap">
 <script>
 /* 首帧前应用日/夜模式，避免闪烁（仅外观偏好存 localStorage，数据不落浏览器）
    paaTheme: light | dark | 空=跟随系统 */
 try { const m = localStorage.getItem('paaTheme'); if (m === 'light' || m === 'dark') document.documentElement.dataset.theme = m; } catch {}
 </script>
 <style>
+/* 字体全部本地打包（fonts/，OFL），离线可用 */
+@font-face{font-family:"Cormorant Garamond";font-style:normal;font-weight:400 700;font-display:swap;src:local("Cormorant Garamond Medium"),url(fonts/cormorant-garamond-500.woff2) format("woff2")}
+@font-face{font-family:"Cormorant Garamond";font-style:italic;font-weight:400 700;font-display:swap;src:local("Cormorant Garamond Medium Italic"),url(fonts/cormorant-garamond-500-italic.woff2) format("woff2")}
+@font-face{font-family:"Noto Serif SC";font-weight:400 500;font-display:swap;src:local("Noto Serif SC"),url(fonts/noto-serif-sc-400.woff2) format("woff2")}
+@font-face{font-family:"Noto Serif SC";font-weight:600 700;font-display:swap;src:local("Noto Serif SC SemiBold"),url(fonts/noto-serif-sc-600.woff2) format("woff2")}
 /* ================================================================
    Yours · Console 设计系统 B（编辑感 · 大地色 · 磨砂）
    主题：html[data-theme=light|dark]；未设置时跟随系统
@@ -92,7 +94,7 @@ html[data-theme="dark"]{
 
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
-body{background:var(--bg);color:var(--ink);font:14px/1.65 var(--sans);overflow:hidden;-webkit-font-smoothing:antialiased;font-variant-numeric:lining-nums tabular-nums;transition:background .3s}
+body{background:var(--bg);color:var(--ink);font:14px/1.65 var(--sans);overflow:hidden;-webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums;transition:background .3s}
 body::before{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;background:
   radial-gradient(900px 600px at 12% -10%,var(--glow1),transparent 60%),
   radial-gradient(800px 700px at 105% 110%,var(--glow2),transparent 60%)}
