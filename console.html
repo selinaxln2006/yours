@@ -482,7 +482,9 @@ html[data-theme="dark"] .tile .cover{opacity:.9}
 .tasks,.caps{display:flex;flex-wrap:wrap;gap:6px}
 .cap2{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;border-radius:99px;font-size:11.5px;background:var(--surf-hi);box-shadow:var(--raise);color:var(--ink2);cursor:default}
 .cap2 i{width:6px;height:6px;border-radius:50%}
-.cap2.mcp{font-style:normal}
+.cap2 em{font:italic 11px var(--serif-en);color:var(--ink3);margin-left:1px}
+.ev.ext .d::after,.tev.ext .c b::after{content:"  ◦ cal";font:italic 11.5px var(--serif-en);color:var(--clay);font-weight:400}
+.daycol .evx.ext{box-shadow:none;background:color-mix(in srgb,var(--clay) 10%,transparent)}
 
 /* ================= 弹层 ================= */
 #modal,#palette{position:fixed;inset:0;z-index:45;display:none;background:color-mix(in srgb,var(--bg) 55%,transparent);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px)}
@@ -1116,6 +1118,9 @@ function handleWs(m){
       S.tools = m.tools || S.tools; S.pkgs = m.pkgs || S.pkgs;
       S.toolRisk = m.risks || S.toolRisk;
       S.demo = !!m.demo;
+      S.mcp = m.mcp || [];
+      S.calendar = m.calendar || null;
+      if (S.calendar){ S.calDone = new Set(); calEnsure(new Date(), new Date()); }
       S.level = (m.level !== undefined) ? m.level : S.level;
       renderHeader(); renderToday(); break;
     case 'level': S.level = m.level; renderHeader(); break;
@@ -1661,8 +1666,40 @@ function expandInWindow(ev, start, end){
   return out;
 }
 const RRULE_LABEL = { none:'不重复', daily:'每天', weekly:'每周', biweekly:'每两周', monthly:'每月', weekday:'工作日' };
+/* ---------- 外部日历（MCP，只读展示）：按月拉取，缓存在 S.cal[date] ---------- */
+function calEnsure(start, end){
+  if (!S.calendar) return;
+  const from = fmtD(new Date(start.getFullYear(), start.getMonth(), 1));
+  const to = fmtD(new Date(end.getFullYear(), end.getMonth() + 1, 0));
+  const key = from + '|' + to;
+  if (S.calDone.has(key)) return;
+  S.calDone.add(key);
+  const tz = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch { return ''; } })();
+  fetch('/api/calendar?from=' + from + '&to=' + to + (tz ? '&tz=' + encodeURIComponent(tz) : ''))
+    .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+    .then(j => {
+      S.cal = S.cal || {};
+      for (let dd = parseD(from); fmtD(dd) <= to; dd.setDate(dd.getDate() + 1)) delete S.cal[fmtD(dd)];
+      for (const e of (j.events || [])) (S.cal[e.date] = S.cal[e.date] || []).push(e);
+      renderToday();
+      if (S.v === 'panel' && S.tab === 'schedule') renderPanel();
+    })
+    .catch(() => { S.calDone.delete(key); });
+}
+function calRefresh(){ if (S.calendar){ S.calDone = new Set(); calEnsure(new Date(), new Date()); } }
+function calEventsIn(start, end){
+  calEnsure(start, end);
+  const lo = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+  const out = [];
+  for (const [ds, arr] of Object.entries(S.cal || {})){
+    const d0 = parseD(ds);
+    if (d0 < lo || d0 > end) continue;
+    for (const e of arr) out.push({ id: 'cal:' + e.id, title: e.title, startTime: e.startTime || '', endTime: e.endTime || '', note: e.location || '', link: e.link, category: e.source, ext: true, _d: d0 });
+  }
+  return out;
+}
 function evListOf(d, start, end){
-  let evs = [];
+  let evs = calEventsIn(start, end);
   for (const ev of (d.schedule||[])) evs = evs.concat(expandInWindow(ev, start, end));
   evs.sort((a,b) => a._d - b._d || (a.startTime||'').localeCompare(b.startTime||''));
   return evs;
@@ -1679,10 +1716,17 @@ function evRow(ev, onDel){
   s.textContent = [ev.endTime&&('至 '+ev.endTime), ev.rrule&&ev.rrule!=='none'&&('重复:'+RRULE_LABEL[ev.rrule]||ev.rrule), ev.note].filter(Boolean).join(' · ');
   b.appendChild(t); b.appendChild(s);
   const cat = document.createElement('span'); cat.className='cat'; cat.textContent = ev.category||'life';
+  r.appendChild(dd); r.appendChild(b); r.appendChild(cat);
+  if (ev.ext){
+    // 外部日历事件只读：改/删请对 Yours 说（走确认卡），或去日历里改
+    r.classList.add('ext');
+    if (ev.link){ r.style.cursor = 'pointer'; r.title = '在日历里打开'; r.addEventListener('click', () => window.open(ev.link, '_blank', 'noopener')); }
+    return r;
+  }
   const del = document.createElement('button'); del.className='iconbtn del'; del.textContent='×';
   del.style.cssText='margin-left:auto'; del.title='删除该事件';
   del.addEventListener('click', (e) => { e.stopPropagation(); onDel && onDel(); });
-  r.appendChild(dd); r.appendChild(b); r.appendChild(cat); r.appendChild(del);
+  r.appendChild(del);
   return r;
 }
 function pSchedule(d){
@@ -1730,6 +1774,11 @@ function pSchedule(d){
         marks[ds].cnt++;
       }
     }
+    for (const ev of calEventsIn(new Date(y, m, 1), new Date(y, m + 1, 0))){
+      const ds = fmtD(ev._d);
+      marks[ds] = marks[ds] || {dots:[], cnt:0};
+      marks[ds].dots.push('w'); marks[ds].cnt++;
+    }
     f.appendChild(calMonth(y, m, marks, {
       sel: parseD(v.sel),
       onNav: (dir) => { v.date = shiftDate(v.date, dir, 'month'); renderPanel(); },
@@ -1770,12 +1819,16 @@ function pSchedule(d){
         const bx = document.createElement('div'); bx.className='evx';
         const t = document.createElement('div'); t.className='et'; t.textContent = (ev.startTime?ev.startTime+' ':'') + (ev.title||'');
         const s = document.createElement('div'); s.className='es'; s.textContent = [ev.endTime&&('至 '+ev.endTime), ev.rrule&&ev.rrule!=='none'&&(RRULE_LABEL[ev.rrule]||ev.rrule)].filter(Boolean).join(' · ');
-        const del = document.createElement('button'); del.className='xdel'; del.textContent='×';
-        del.addEventListener('click', () => {
-          const idx = (d.schedule||[]).findIndex(x => x.id === ev.id);
-          arrDel('schedule', idx).then(() => toast('已删除')).catch(e => toast('删除失败：' + e.message));
-        });
-        bx.appendChild(t); bx.appendChild(s); bx.appendChild(del);
+        bx.appendChild(t); bx.appendChild(s);
+        if (ev.ext) bx.classList.add('ext');
+        else {
+          const del = document.createElement('button'); del.className='xdel'; del.textContent='×';
+          del.addEventListener('click', () => {
+            const idx = (d.schedule||[]).findIndex(x => x.id === ev.id);
+            arrDel('schedule', idx).then(() => toast('已删除')).catch(e => toast('删除失败：' + e.message));
+          });
+          bx.appendChild(del);
+        }
         col.appendChild(bx);
       });
       grid.appendChild(col);
@@ -2509,8 +2562,10 @@ function capabilities(){
     const n = names.filter(x => x.startsWith(nm + '_')).length;
     caps.push({ label: nm === 'life' ? '生活数据' : nm, n, col:'var(--sage)', pkg:true });
   }
-  const mcp = names.filter(x => x.startsWith('mcp_') || x.includes('__')).length;
-  if (mcp) caps.push({ label:'MCP', n:mcp, col:'var(--slate)' });
+  for (const s of (S.mcp || [])){
+    const isCal = s.name === S.calendar;
+    caps.push({ label: isCal ? '日历' : s.name, n: s.tools, col: isCal ? 'var(--clay)' : 'var(--slate)', mcp: true, title: 'MCP · ' + s.name });
+  }
   return caps;
 }
 function renderToday(){
@@ -2549,7 +2604,7 @@ function renderToday(){
   h += evs.length ? '<div class="tl">' + evs.map((e, i) => {
     const cls = i === nextIdx ? ' now' : (e.startTime && e.startTime < hm && (!e.endTime || e.endTime < hm)) ? ' past' : '';
     const sub = [e.endTime && '至 ' + e.endTime, e.rrule && e.rrule !== 'none' && RRULE_LABEL[e.rrule], e.note].filter(Boolean).join(' · ');
-    return '<div class="tev' + cls + '"><span class="t">' + esc(e.startTime || '全天') + '</span><div class="c"><b>' + esc(e.title || '') + '</b>' + (sub ? '<span>' + esc(sub) + '</span>' : '') + '</div></div>';
+    return '<div class="tev' + cls + (e.ext ? ' ext' : '') + '"><span class="t">' + esc(e.startTime || '全天') + '</span><div class="c"><b>' + esc(e.title || '') + '</b>' + (sub ? '<span>' + esc(sub) + '</span>' : '') + '</div></div>';
   }).join('') + '</div>' : '<div class="tempty">Nothing scheduled.</div>';
   h += '</div>';
   const todos = (d.todos || []).map((x, i) => ({ x, i })).filter(o => !o.x.done)
@@ -2559,7 +2614,7 @@ function renderToday(){
   h += '</div>';
   const caps = capabilities();
   if (caps.length) h += '<div class="tsec"><h5>Capabilities<a data-go="settings">' + (S.tools || []).length + ' tools</a></h5><div class="caps">' +
-    caps.map(c => '<span class="cap2" title="' + c.n + ' 个工具"><i style="background:' + c.col + '"></i>' + esc(c.label) + '</span>').join('') + '</div></div>';
+    caps.map(c => '<span class="cap2' + (c.mcp ? ' mcp' : '') + '" title="' + esc((c.title ? c.title + ' · ' : '') + c.n + ' 个工具') + '"><i style="background:' + c.col + '"></i>' + esc(c.label) + (c.mcp ? '<em>MCP</em>' : '') + '</span>').join('') + '</div></div>';
   h += '<div class="tsec"><h5>Try saying</h5><div class="tasks">' + SUGGEST.map(s => '<button data-say="' + esc(s) + '">' + esc(s) + '</button>').join('') + '</div></div>';
   el.innerHTML = h;
 }
@@ -2739,7 +2794,8 @@ function init(){
   });
   window.addEventListener('resize', updateBanner);
   tickClock(); setInterval(tickClock, 1000);
-  setInterval(() => { if (S.data) renderToday(); }, 60_000);  // 日程"下一项"随时间推移
+  setInterval(() => { if (S.data) renderToday(); }, 60_000);
+  setInterval(calRefresh, 5 * 60_000);   // 外部日历：5 分钟重拉一次（server 侧也有 60s 缓存）  // 日程"下一项"随时间推移
   renderModes(); renderComposer(); renderHeader(); renderStream(); renderToday();
   setView('chat');
   fetchData();

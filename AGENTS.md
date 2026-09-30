@@ -34,7 +34,7 @@ paa/                        # PAA 大脑层（TS ESM，Node 24 直接跑 .ts，�
 │   ├── memory-provider.ts  # 记忆（L0-L3 分层，文件即记忆）
 │   ├── artifact-provider.ts# 产物（artifacts/ 真文件落盘 + index.json）
 │   ├── pkg-loader.ts       # 技能包加载（ToolPkg：manifest.json + impl.mjs）
-│   ├── mcp-client.ts       # MCP client（零依赖 JSON-RPC over stdio）
+│   ├── mcp-client.ts       # MCP client（零依赖 JSON-RPC over stdio；CLI 与 server 都用）
 │   ├── types.ts            # 共享类型
 │   └── ws.ts               # 零依赖 WebSocket
 ├── cli/                    # 宿主 1：CLI（node cli/main.ts）
@@ -42,7 +42,9 @@ paa/                        # PAA 大脑层（TS ESM，Node 24 直接跑 .ts，�
 │   └── render.ts           # 终端渲染
 ├── server/                 # 宿主 2：console server（127.0.0.1:8765）
 │   ├── main.ts             # HTTP 静态+REST+WS+chat
-│   └── request-guard.ts    # 来源门禁（Origin/Host 校验、LAN 令牌）——改 server 路由别绕过它
+│   ├── request-guard.ts    # 来源门禁（Origin/Host 校验、LAN 令牌）——改 server 路由别绕过它
+│   ├── mcp.ts              # server 侧 MCP 接入：按 annotations 定风险 + 日历读取（/api/calendar）
+│   └── demo-calendar.mjs   # 演示/测试用的假日历 MCP server
 ├── tools/                  # 内置工具组（注入到 pipeline）
 │   ├── core-tools.ts       # fs_read/write/append/patch/list/grep + shell_run（沙箱+黑名单）
 │   ├── memory-tools.ts     # memory_search/list/save/consolidate/forget
