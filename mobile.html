@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0b0e14">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="/manifest.webmanifest">
+<title>PAA</title>
+<style>
+:root{
+  --bg:#0b0e14; --panel:#12161f; --panel2:#1a2029; --line:#232b38;
+  --txt:#e8edf4; --mut:#8794a6; --dim:#5b6778;
+  --acc:#5aa2ff; --acc2:#7cc0ff; --ok:#42c983; --warn:#e0b341; --bad:#f0645c;
+  --safe-b:env(safe-area-inset-bottom,0px);
+  --safe-t:env(safe-area-inset-top,0px);
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{
+  background:var(--bg);color:var(--txt);
+  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  font-size:15px;line-height:1.5;
+  overscroll-behavior:none;
+}
+
+/* ===== >768px 引导去 console ===== */
+#pc-hint{display:none}
+@media (min-width:769px){
+  body{display:flex;align-items:center;justify-content:center}
+  #app{display:none!important}
+  #pc-hint{display:flex!important;flex-direction:column;align-items:center;gap:14px;color:var(--mut);text-align:center;padding:24px}
+  #pc-hint .big{font-size:44px}
+  #pc-hint a{color:var(--acc);text-decoration:none;border-bottom:1px solid var(--acc)}
+}
+
+/* ===== 布局骨架 ===== */
+#app{height:100%;display:flex;flex-direction:column;background:var(--bg)}
+#ov{flex:0 0 auto;padding:calc(10px + var(--safe-t)) 14px 10px;border-bottom:1px solid var(--line)}
+#ov-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+#ov-title{font-size:18px;font-weight:800;letter-spacing:.5px}
+#ov-date{font-size:12px;color:var(--mut);margin-left:2px}
+#sync-btn{
+  margin-left:auto;background:none;border:1px solid var(--line);color:var(--mut);
+  border-radius:10px;padding:5px 10px;font-size:12px;cursor:pointer;min-height:32px;
+}
+#sync-btn:active{background:var(--panel2)}
+#sync-btn.spin{pointer-events:none;opacity:.6}
+#ov-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.ov-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:9px 6px;text-align:center;min-width:0}
+.ov-k{font-size:11px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ov-v{font-size:21px;font-weight:800;line-height:1.15;margin-top:2px}
+.ov-s{font-size:10px;color:var(--mut);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ov-ok .ov-v{color:var(--ok)} .ov-warn .ov-v{color:var(--warn)} .ov-bad .ov-v{color:var(--bad)}
+
+/* ===== 页面区 ===== */
+#main{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+.page{flex:1 1 auto;min-height:0;display:none;flex-direction:column}
+.page.on{display:flex}
+
+/* ---- 对话页 ---- */
+#chat-head{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line)}
+#chat-sess{background:none;border:none;color:var(--mut);font-size:13px;cursor:pointer;display:flex;align-items:center;gap:4px;min-height:36px}
+#chat-sess b{color:var(--txt);font-weight:600;max-width:46vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#chat-status{margin-left:auto;font-size:11px;color:var(--mut)}
+#chat-status.busy{color:var(--acc2)}
+#chat-log{flex:1 1 auto;min-height:0;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px;-webkit-overflow-scrolling:touch}
+#chat-log::-webkit-scrollbar{display:none}
+.msg{display:flex;flex-direction:column;max-width:88%}
+.msg.user{align-self:flex-end;align-items:flex-end}
+.msg.agent{align-self:flex-start;align-items:flex-start}
+.msg .who{font-size:10px;color:var(--mut);margin-bottom:3px;padding:0 4px}
+.msg .body{
+  padding:10px 13px;border-radius:16px;font-size:15px;word-break:break-word;white-space:pre-wrap;
+}
+.msg.user .body{background:var(--acc);color:#fff;border-bottom-right-radius:5px}
+.msg.agent .body{background:var(--panel);border:1px solid var(--line);border-bottom-left-radius:5px}
+.msg.agent .body code{font-family:ui-monospace,Consolas,monospace;font-size:13px;background:rgba(122,162,255,.14);padding:1px 5px;border-radius:5px}
+.msg.agent .body pre{background:#0d1119;border:1px solid var(--line);border-radius:10px;padding:10px;overflow-x:auto;margin:6px 0;font-size:12.5px}
+.msg .cursor{display:inline-block;width:7px;height:15px;background:var(--acc2);vertical-align:-2px;animation:blink .9s steps(1) infinite;border-radius:1px}
+@keyframes blink{50%{opacity:0}}
+.tool-row{
+  align-self:flex-start;font-size:12px;color:var(--mut);
+  background:var(--panel);border:1px dashed var(--line);border-radius:10px;
+  padding:5px 10px;display:flex;align-items:center;gap:6px;max-width:88%;
+}
+.tool-row .tname{color:var(--acc2);font-family:ui-monospace,Consolas,monospace;font-size:11.5px}
+.tool-row.ok .tst{color:var(--ok)} .tool-row.err .tst{color:var(--bad)}
+#chat-empty{margin:auto;text-align:center;color:var(--mut);padding:24px}
+#chat-empty .big{font-size:36px;margin-bottom:8px}
+#chat-empty .hint{font-size:13px;line-height:1.9}
+#composer{
+  flex:0 0 auto;display:flex;gap:8px;align-items:flex-end;
+  padding:10px 12px calc(10px + var(--safe-b));border-top:1px solid var(--line);background:var(--bg);
+}
+#chat-input{
+  flex:1;background:var(--panel);border:1px solid var(--line);color:var(--txt);
+  border-radius:20px;padding:10px 15px;font-size:15px;outline:none;min-width:0;
+  resize:none;max-height:110px;line-height:1.4;font-family:inherit;
+}
+#chat-input:focus{border-color:var(--acc)}
+#chat-send{
+  background:var(--acc);border:none;color:#fff;border-radius:50%;
+  width:42px;height:42px;font-size:18px;cursor:pointer;flex:0 0 auto;
+}
+#chat-send:disabled{opacity:.4}
+#chat-send:not(:disabled):active{transform:scale(.94)}
+
+/* ---- 日程 / 待办页 ---- */
+#sched-body,#todo-body{flex:1 1 auto;min-height:0;overflow-y:auto;padding:12px 14px 24px;-webkit-overflow-scrolling:touch}
+#sched-body::-webkit-scrollbar,#todo-body::-webkit-scrollbar{display:none}
+.day-hd{display:flex;align-items:baseline;gap:8px;margin:16px 0 8px}
+.day-hd:first-child{margin-top:0}
+.day-hd .dd{font-size:14px;font-weight:700}
+.day-hd .dw{font-size:11px;color:var(--mut)}
+.day-hd.today .dd{color:var(--acc2)}
+.day-hd .dc{margin-left:auto;font-size:11px;color:var(--mut)}
+.ev{
+  background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  padding:11px 12px;display:flex;align-items:center;gap:10px;margin-bottom:8px;
+}
+.ev .bar{width:4px;height:34px;border-radius:2px;flex:0 0 auto}
+.ev .info{flex:1;min-width:0}
+.ev .t{font-size:14.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ev .s{font-size:12px;color:var(--mut);margin-top:2px}
+.ev .del{background:none;border:none;color:var(--dim);font-size:16px;cursor:pointer;padding:6px;min-width:32px}
+.cat-study{background:var(--acc)} .cat-work{background:var(--warn)} .cat-fitness{background:var(--ok)}
+.cat-social{background:#c586ff} .cat-life,.cat-other{background:var(--mut)}
+.rr-badge{display:inline-block;font-size:10px;color:var(--acc2);border:1px solid var(--line);border-radius:6px;padding:0 5px;margin-left:6px}
+
+/* ---- 待办 ---- */
+.todo{
+  background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  padding:11px 12px;display:flex;align-items:center;gap:10px;margin-bottom:8px;
+}
+.todo.done{opacity:.5}
+.todo .cb{
+  width:22px;height:22px;border-radius:7px;border:2px solid var(--mut);background:none;
+  cursor:pointer;flex:0 0 auto;display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;
+}
+.todo.done .cb{background:var(--ok);border-color:var(--ok)}
+.todo .tt{flex:1;min-width:0;font-size:14.5px;word-break:break-word}
+.todo.done .tt{text-decoration:line-through;color:var(--mut)}
+.todo .pr{font-size:10px;font-weight:700;border-radius:6px;padding:2px 6px;flex:0 0 auto}
+.pr-high{background:rgba(240,100,92,.16);color:var(--bad)}
+.pr-mid{background:rgba(224,179,65,.16);color:var(--warn)}
+.pr-low{background:rgba(66,201,131,.16);color:var(--ok)}
+.todo .del{background:none;border:none;color:var(--dim);font-size:16px;cursor:pointer;padding:6px}
+.sec-hd{display:flex;align-items:center;gap:8px;margin:16px 0 8px;font-size:13px;color:var(--mut)}
+.sec-hd:first-child{margin-top:0}
+.sec-hd b{color:var(--txt)}
+.empty{text-align:center;color:var(--mut);padding:36px 16px;font-size:13px;line-height:2}
+
+/* ---- 待办快速添加 ---- */
+#todo-add{display:flex;gap:8px;padding:10px 12px calc(6px + var(--safe-b));border-top:1px solid var(--line)}
+#todo-input{
+  flex:1;background:var(--panel);border:1px solid var(--line);color:var(--txt);
+  border-radius:12px;padding:10px 13px;font-size:15px;outline:none;min-width:0;font-family:inherit;
+}
+#todo-input:focus{border-color:var(--acc)}
+#todo-add-btn{background:var(--acc);border:none;color:#fff;border-radius:12px;padding:0 18px;font-size:16px;cursor:pointer}
+
+/* ===== 底部 Tab ===== */
+#tabbar{
+  flex:0 0 auto;display:flex;background:var(--panel);border-top:1px solid var(--line);
+  padding:6px 8px calc(6px + var(--safe-b));
+}
+.tab{
+  flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;
+  background:none;border:none;color:var(--mut);font-size:11px;cursor:pointer;
+  padding:7px 0;border-radius:12px;min-height:48px;
+}
+.tab .ic{font-size:22px;line-height:1;filter:grayscale(1) opacity(.55)}
+.tab.on{color:var(--txt)}
+.tab.on .ic{filter:none}
+
+/* ===== bottom sheet ===== */
+.sheet{
+  position:fixed;left:0;right:0;bottom:0;top:0;z-index:40;display:none;
+  flex-direction:column;justify-content:flex-end;
+  background:rgba(4,6,10,.55);backdrop-filter:blur(2px);
+}
+.sheet.open{display:flex}
+.sheet-panel{
+  background:var(--bg);border-radius:18px 18px 0 0;max-height:86%;display:flex;flex-direction:column;
+  animation:sheetUp .26s cubic-bezier(.2,.8,.25,1);
+}
+@keyframes sheetUp{from{transform:translateY(60px);opacity:.4}to{transform:translateY(0);opacity:1}}
+.sheet-grab{width:38px;height:4px;border-radius:2px;background:var(--line);margin:8px auto 2px;flex:0 0 auto}
+.sheet-hd{flex:0 0 auto;display:flex;align-items:center;padding:8px 16px 10px}
+.sheet-hd .st{font-size:16px;font-weight:700;flex:1}
+.sheet-x{background:var(--panel2);border:1px solid var(--line);color:var(--mut);width:32px;height:32px;border-radius:50%;font-size:15px;cursor:pointer}
+.sheet-body{flex:1 1 auto;overflow-y:auto;padding:4px 16px 24px;-webkit-overflow-scrolling:touch}
+
+/* 会话列表 */
+.sess{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:11px 12px;display:flex;align-items:center;gap:10px;margin-bottom:8px;cursor:pointer}
+.sess.on{border-color:var(--acc)}
+.sess .si{flex:1;min-width:0}
+.sess .st2{font-size:14.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sess .ss{font-size:11.5px;color:var(--mut);margin-top:2px}
+.sess .sx{background:none;border:none;color:var(--dim);font-size:15px;cursor:pointer;padding:8px}
+.sheet-act{display:flex;gap:10px;padding:12px 16px calc(14px + var(--safe-b));border-top:1px solid var(--line)}
+.btn{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:12px;padding:11px 16px;font-size:14.5px;cursor:pointer}
+.btn.primary{background:var(--acc);border-color:var(--acc);color:#fff}
+.btn.block{flex:1}
+
+/* 表单 */
+.field{margin-bottom:12px}
+.field label{display:block;font-size:12px;color:var(--mut);margin-bottom:5px}
+.field input,.field select{
+  width:100%;background:var(--panel);border:1px solid var(--line);color:var(--txt);
+  border-radius:11px;padding:11px 12px;font-size:15px;outline:none;font-family:inherit;
+  min-height:44px;-webkit-appearance:none;appearance:none;
+}
+.field input:focus,.field select:focus{border-color:var(--acc)}
+.field-row{display:flex;gap:10px}
+.field-row .field{flex:1}
+
+/* ===== 令牌门 ===== */
+#gate{
+  position:fixed;inset:0;z-index:60;display:none;flex-direction:column;
+  align-items:center;justify-content:center;gap:14px;background:var(--bg);padding:28px;
+}
+#gate.open{display:flex}
+#gate .big{font-size:42px}
+#gate p{color:var(--mut);font-size:14px;text-align:center;line-height:1.8}
+#gate input{
+  width:100%;max-width:320px;background:var(--panel);border:1px solid var(--line);color:var(--txt);
+  border-radius:12px;padding:13px 15px;font-size:16px;outline:none;text-align:center;font-family:ui-monospace,Consolas,monospace;
+}
+#gate input:focus{border-color:var(--acc)}
+#gate .btn{width:100%;max-width:320px}
+
+/* toast */
+#toast{
+  position:fixed;left:50%;bottom:calc(84px + var(--safe-b));transform:translateX(-50%) translateY(10px);
+  background:var(--panel2);border:1px solid var(--line);color:var(--txt);
+  padding:10px 18px;border-radius:22px;font-size:13.5px;z-index:99;max-width:82%;text-align:center;
+  opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;box-shadow:0 6px 24px rgba(0,0,0,.5);
+}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.spin{display:inline-block;animation:rot .8s linear infinite}
+@keyframes rot{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+
+<div id="pc-hint">
+  <div class="big">🖥️</div>
+  <div>PAA mobile 专为手机设计</div>
+  <div>大屏请用 <a href="console.html">console.html</a></div>
+</div>
+
+<div id="app">
+  <!-- 今日概览 -->
+  <header id="ov">
+    <div id="ov-head">
+      <span id="ov-title">PAA</span>
+      <span id="ov-date"></span>
+      <button id="sync-btn">🔄 同步</button>
+    </div>
+    <div id="ov-grid">
+      <div class="ov-card" data-k="sess"><div class="ov-k">会话</div><div class="ov-v">–</div><div class="ov-s">&nbsp;</div></div>
+      <div class="ov-card" data-k="todo"><div class="ov-k">待办</div><div class="ov-v">–</div><div class="ov-s">&nbsp;</div></div>
+      <div class="ov-card" data-k="sched"><div class="ov-k">日程</div><div class="ov-v">–</div><div class="ov-s">&nbsp;</div></div>
+      <div class="ov-card" data-k="sync"><div class="ov-k">同步</div><div class="ov-v">–</div><div class="ov-s">&nbsp;</div></div>
+    </div>
+  </header>
+
+  <main id="main">
+    <!-- 对话页 -->
+    <section id="page-chat" class="page on">
+      <div id="chat-head">
+        <button id="chat-sess">🗂️ <b id="chat-sess-name">新会话</b> ▾</button>
+        <span id="chat-status"></span>
+      </div>
+      <div id="chat-log"></div>
+      <div id="chat-empty">
+        <div class="big">🧭</div>
+        <div class="hint">对枢说点什么——<br>「记录今晚睡眠 7.5 小时」<br>「周四下午 3 点开会」<br>「今天有哪些待办」</div>
+      </div>
+      <div id="composer">
+        <textarea id="chat-input" rows="1" placeholder="输入指令…" autocomplete="off"></textarea>
+        <button id="chat-send">➤</button>
+      </div>
+    </section>
+
+    <!-- 日程页 -->
+    <section id="page-sched" class="page">
+      <div id="sched-body"></div>
+      <div id="todo-add" style="border-top:1px solid var(--line)">
+        <button class="btn primary block" id="sched-add-btn">＋ 添加日程</button>
+      </div>
+    </section>
+
+    <!-- 待办页 -->
+    <section id="page-todo" class="page">
+      <div id="todo-body"></div>
+      <div id="todo-add">
+        <input id="todo-input" type="text" placeholder="新待办…" autocomplete="off">
+        <button id="todo-add-btn">＋</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- 底部 Tab -->
+  <nav id="tabbar">
+    <button class="tab on" data-page="chat"><span class="ic">💬</span>对话</button>
+    <button class="tab" data-page="sched"><span class="ic">📅</span>日程</button>
+    <button class="tab" data-page="todo"><span class="ic">✅</span>待办</button>
+  </nav>
+</div>
+
+<!-- 会话 sheet -->
+<div class="sheet" id="sheet-sess">
+  <div class="sheet-panel">
+    <div class="sheet-grab"></div>
+    <div class="sheet-hd"><span class="st">会话</span><button class="sheet-x" data-close>✕</button></div>
+    <div class="sheet-body" id="sess-list"></div>
+    <div class="sheet-act"><button class="btn primary block" id="sess-new">＋ 新建会话</button></div>
+  </div>
+</div>
+
+<!-- 添加日程 sheet -->
+<div class="sheet" id="sheet-ev">
+  <div class="sheet-panel">
+    <div class="sheet-grab"></div>
+    <div class="sheet-hd"><span class="st">添加日程</span><button class="sheet-x" data-close>✕</button></div>
+    <div class="sheet-body">
+      <div class="field"><label>标题</label><input id="ev-title" type="text" placeholder="如：MA2101 习题课"></div>
+      <div class="field"><label>日期</label><input id="ev-date" type="date"></div>
+      <div class="field-row">
+        <div class="field"><label>开始</label><input id="ev-start" type="time"></div>
+        <div class="field"><label>结束</label><input id="ev-end" type="time"></div>
+      </div>
+      <div class="field"><label>分类</label>
+        <select id="ev-cat">
+          <option value="study">学习</option><option value="work">工作</option>
+          <option value="life" selected>生活</option><option value="fitness">健身</option>
+          <option value="social">社交</option><option value="other">其他</option>
+        </select>
+      </div>
+    </div>
+    <div class="sheet-act">
+      <button class="btn block" data-close>取消</button>
+      <button class="btn primary block" id="ev-save">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 令牌门 -->
+<div id="gate">
+  <div class="big">🔐</div>
+  <p>本服务启用了 LAN 访问令牌<br>请输入令牌（paa/data/lan.json 的 accessToken）</p>
+  <input id="gate-input" type="password" placeholder="access token" autocomplete="off">
+  <button class="btn primary" id="gate-btn">进入</button>
+</div>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+/* =====================================================================
+   PAA mobile v2 — 重写版（2026-09-04）
+   原则：所有功能接真实 API，零假按钮。
+   API 契约与 console.html 对齐：
+   - GET  /api/overview        今日概览
+   - GET  /api/sessions        会话列表 {sessions:[{id,title,messageCount}]}
+   - POST /api/sessions        新建 {session:{id}}
+   - GET  /api/sessions/:id    详情 {session:{uiHistory:[...]}}
+   - DEL  /api/sessions/:id
+   - POST /api/chat/stream     {message,sessionId} → SSE(meta/delta/event/done/error)
+   - GET  /api/data            18 键生活数据（schedule/todos 为数组）
+   - PUT  /api/data/:key       整键覆写（数组增删改 = 本地拼好整组 PUT）
+   - POST /api/sync            云同步
+   - POST /api/lan/token       令牌换 HttpOnly cookie（7 天免输）
+   ===================================================================== */
+
+/* ---------- utils ---------- */
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtD = (d) => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+const parseD = (s) => { if (!s) return null; const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s); return m ? new Date(+m[1], +m[2]-1, +m[3]) : null; };
+const WDAY = ['日','一','二','三','四','五','六'];
+let _toastT = null;
+function toast(msg){
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(_toastT); _toastT = setTimeout(() => t.classList.remove('show'), 2400);
+}
+
+/* ---------- 令牌门禁（与 console 同机制：header / cookie，403 → 全屏输入） ---------- */
+const PAA_TOKEN = (() => { try { return localStorage.getItem('paaToken') || ''; } catch { return ''; } })();
+let _gateOpen = false;
+{
+  const _fetch = window.fetch.bind(window);
+  window.fetch = async (input, init) => {
+    const u = typeof input === 'string' ? input : (input && input.url) || '';
+    const api = u.includes('/api/') && !u.includes('/api/auth/') && !u.includes('/api/lan/');
+    if (PAA_TOKEN && api){
+      init = init || {};
+      const h = new Headers(init.headers || {});
+      if (!h.has('x-access-token')) h.set('x-access-token', PAA_TOKEN);
+      init.headers = h;
+    }
+    const res = await _fetch(input, init);
+    if (res.status === 403 && api && !_gateOpen){ openGate(); }
+    return res;
+  };
+}
+function openGate(){ _gateOpen = true; $('gate').classList.add('open'); $('gate-input').focus(); }
+async function submitGate(){
+  const t = $('gate-input').value.trim();
+  if (!t) return;
+  try {
+    const r = await fetch('/api/lan/token', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: t }),
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    try { localStorage.setItem('paaToken', t); } catch {}
+    location.reload();
+  } catch (e) { toast('令牌无效：' + e.message); }
+}
+$('gate-btn').addEventListener('click', submitGate);
+$('gate-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') submitGate(); });
+
+/* ---------- state ---------- */
+const S = {
+  tab: 'chat',
+  data: null,            // /api/data 全量（schedule/todos 数组）
+  sessionId: null,        // 当前会话
+  sessTitle: null,
+  busy: false,
+  msgNodes: [],          // 当前 DOM 消息节点（会话切换时清）
+};
+
+/* ---------- Tab 切换 ---------- */
+document.querySelectorAll('#tabbar .tab').forEach((b) => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('#tabbar .tab').forEach(x => x.classList.remove('on'));
+    document.querySelectorAll('.page').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    S.tab = b.dataset.page;
+    $('page-' + S.tab).classList.add('on');
+    if (S.tab === 'sched') renderSched();
+    if (S.tab === 'todo') renderTodos();
+  });
+});
+
+/* ---------- sheet 开关 ---------- */
+function openSheet(id){ $(id).classList.add('open'); }
+function closeSheet(id){ $(id).classList.remove('open'); }
+document.querySelectorAll('.sheet').forEach((sh) => {
+  sh.addEventListener('click', (e) => { if (e.target === sh) closeSheet(sh.id); });
+  sh.querySelectorAll('[data-close]').forEach((b) => b.addEventListener('click', () => closeSheet(sh.id)));
+});
+
+/* =====================================================================
+   概览（GET /api/overview）
+   ===================================================================== */
+async function loadOverview(){
+  try {
+    const r = await fetch('/api/overview');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const o = await r.json();
+    const cards = [
+      { k: 'sess',  v: o.sessions?.activeToday ?? 0, s: '今日活跃',
+        cls: (o.sessions?.activeToday > 0 ? 'ov-ok' : '') },
+      { k: 'todo',  v: o.tasks?.pending ?? 0, s: '待办 · 完成 ' + (o.tasks?.done ?? 0),
+        cls: (o.tasks?.pending > 0 ? 'ov-warn' : 'ov-ok') },
+      { k: 'sched', v: o.schedule?.today ?? (o.schedule?.items?.length ?? 0),
+        s: o.schedule?.items?.[0] ? String(o.schedule.items[0].title).slice(0, 8) : '今日无安排', cls: '' },
+      { k: 'sync',  v: o.sync?.dirty ? o.sync.dirty + ' 待同步' : '已同步',
+        s: o.sync?.lastSyncAt ? new Date(o.sync.lastSyncAt).toTimeString().slice(0,5) : '从未',
+        cls: (o.sync?.dirty ? 'ov-bad' : 'ov-ok') },
+    ];
+    document.querySelectorAll('.ov-card').forEach((el) => {
+      const c = cards.find(x => x.k === el.dataset.k);
+      if (!c) return;
+      el.className = 'ov-card ' + c.cls;
+      el.children[1].textContent = c.v;
+      el.children[2].textContent = c.s;
+    });
+  } catch { /* 概览失败静默，不打扰 */ }
+}
+
+/* ---------- 同步按钮（POST /api/sync，真实调用） ---------- */
+$('sync-btn').addEventListener('click', async () => {
+  const b = $('sync-btn');
+  if (b.classList.contains('spin')) return;
+  b.classList.add('spin'); b.textContent = '⏳ 同步中';
+  try {
+    const r = await fetch('/api/sync', { method: 'POST' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json().catch(() => null);
+    toast('✅ 同步完成' + (j && j.pushed !== undefined ? '（推 ' + j.pushed + ' / 拉 ' + (j.pulled ?? 0) + '）' : ''));
+    loadOverview(); fetchData();
+  } catch (e) {
+    toast('同步失败：' + e.message + (e.message.includes('401') ? '（未登录云端）' : ''));
+  } finally {
+    b.classList.remove('spin'); b.textContent = '🔄 同步';
+  }
+});
+
+/* =====================================================================
+   生活数据（GET /api/data + PUT /api/data/:key）
+   ===================================================================== */
+async function fetchData(){
+  try {
+    const r = await fetch('/api/data');
+    if (!r.ok) return;
+    S.data = await r.json();
+    if (S.tab === 'sched') renderSched();
+    if (S.tab === 'todo') renderTodos();
+  } catch { /* 离线静默 */ }
+}
+async function putData(key, val){
+  const r = await fetch('/api/data/' + encodeURIComponent(key), {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(val),
+  });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  if (S.data) S.data[key] = val;
+}
+const arrOf = (k) => (S.data && S.data[k]) || [];
+
+/* =====================================================================
+   日程页（今天起 7 天，含 rrule 重复展开——逻辑对齐 console.expandInWindow）
+   ===================================================================== */
+function expandEv(ev, start, end){
+  const out = [];
+  const d0 = parseD(ev.date); if (!d0) return out;
+  const rrule = ev.rrule || 'none';
+  if (rrule === 'none'){ if (d0 >= start && d0 <= end) out.push(Object.assign({}, ev, { _d: d0 })); return out; }
+  const until = ev.rruleUntil ? parseD(ev.rruleUntil) : null;
+  const step = (cur) => {
+    if (rrule === 'weekly') cur.setDate(cur.getDate() + 7);
+    else if (rrule === 'biweekly') cur.setDate(cur.getDate() + 14);
+    else if (rrule === 'monthly') cur.setMonth(cur.getMonth() + 1);
+    else cur.setDate(cur.getDate() + 1);
+  };
+  let cur = new Date(d0), guard = 0;
+  while (cur <= end && guard++ < 400){
+    if (until && cur > until) break;
+    if (cur >= start){
+      let hit = true;
+      if (rrule === 'weekday'){ const wd = cur.getDay(); hit = wd >= 1 && wd <= 5; }
+      else if (rrule === 'weekly' && ev.rruleDays && ev.rruleDays.length){ const wd = cur.getDay() || 7; hit = ev.rruleDays.includes(wd); }
+      else if (rrule === 'monthly'){ hit = cur.getDate() === d0.getDate(); }
+      if (hit) out.push(Object.assign({}, ev, { _d: new Date(cur) }));
+    }
+    step(cur);
+  }
+  return out;
+}
+const RR_LABEL = { weekly: '每周', biweekly: '双周', monthly: '每月', weekday: '工作日', daily: '每天' };
+function renderSched(){
+  const box = $('sched-body');
+  if (!S.data){ box.innerHTML = '<div class="empty">数据加载中…</div>'; return; }
+  const today = new Date(); today.setHours(0,0,0,0);
+  const end = new Date(today); end.setDate(end.getDate() + 6); end.setHours(23,59,59,999);
+  const evs = [];
+  for (const ev of arrOf('schedule')) evs.push(...expandEv(ev, today, end));
+  evs.sort((a,b) => a._d - b._d || (a.startTime||'').localeCompare(b.startTime||''));
+  if (!evs.length){
+    box.innerHTML = '<div class="empty">📅 未来 7 天无日程<br>点下方「＋ 添加日程」<br>或对枢说「周四下午 3 点开会」</div>';
+    return;
+  }
+  let html = '', lastDay = '';
+  for (const ev of evs){
+    const ds = fmtD(ev._d);
+    if (ds !== lastDay){
+      lastDay = ds;
+      const isToday = ds === fmtD(today);
+      html += '<div class="day-hd' + (isToday ? ' today' : '') + '">' +
+        '<span class="dd">' + (isToday ? '今天' : String(ev._d.getMonth()+1) + '月' + ev._d.getDate() + '日') + '</span>' +
+        '<span class="dw">周' + WDAY[ev._d.getDay()] + '</span></div>';
+    }
+    const time = ev.startTime ? (ev.startTime + (ev.endTime ? ' – ' + ev.endTime : '')) : '全天';
+    html += '<div class="ev" data-eid="' + esc(ev.id || '') + '" data-ds="' + ds + '">' +
+      '<span class="bar cat-' + esc(ev.category || 'other') + '"></span>' +
+      '<div class="info"><div class="t">' + esc(ev.title || '（无标题）') +
+        (ev.rrule && RR_LABEL[ev.rrule] ? '<span class="rr-badge">' + RR_LABEL[ev.rrule] + '</span>' : '') + '</div>' +
+      '<div class="s">' + esc(time) + '</div></div>' +
+      '<button class="del" data-del="' + esc(ev.id || '') + '" data-ds="' + ds + '">✕</button></div>';
+  }
+  box.innerHTML = html;
+  box.querySelectorAll('.del').forEach((b) => b.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const id = b.dataset.del, ds = b.dataset.ds;
+    const arr = arrOf('schedule');
+    // 优先按 id 删；无 id 的旧数据按 date+title 定位
+    let idx = arr.findIndex(x => x.id === id);
+    if (idx < 0) idx = arr.findIndex(x => x.date === ds && x.id === id);
+    if (idx < 0){ toast('定位失败，请到电脑端删除'); return; }
+    if (!confirm('删除这条日程？')) return;
+    try { await putData('schedule', arr.filter((_, i) => i !== idx)); toast('已删除'); renderSched(); loadOverview(); }
+    catch (err) { toast('删除失败：' + err.message); }
+  }));
+}
+
+/* ---------- 添加日程（sheet 表单 → arrAdd → PUT） ---------- */
+$('sched-add-btn').addEventListener('click', () => {
+  $('ev-date').value = fmtD(new Date());
+  openSheet('sheet-ev');
+  setTimeout(() => $('ev-title').focus(), 250);
+});
+$('ev-save').addEventListener('click', async () => {
+  const title = $('ev-title').value.trim();
+  if (!title){ toast('请填标题'); return; }
+  const ev = {
+    id: Date.now().toString(36),
+    title,
+    date: $('ev-date').value || fmtD(new Date()),
+    startTime: $('ev-start').value,
+    endTime: $('ev-end').value,
+    category: $('ev-cat').value,
+  };
+  try {
+    await putData('schedule', arrOf('schedule').concat([ev]));
+    $('ev-title').value = ''; $('ev-start').value = ''; $('ev-end').value = '';
+    closeSheet('sheet-ev');
+    toast('✅ 已添加 · ' + title);
+    renderSched(); loadOverview();
+  } catch (e) { toast('添加失败：' + e.message); }
+});
+
+/* =====================================================================
+   待办页（todos 数组：{id,title,priority,dueDate,done,category,createdAt}）
+   ===================================================================== */
+const PR_LABEL = { high: 'P1', mid: 'P2', low: 'P3' };
+const PR_ORDER = { high: 0, mid: 1, low: 2 };
+function renderTodos(){
+  const box = $('todo-body');
+  if (!S.data){ box.innerHTML = '<div class="empty">数据加载中…</div>'; return; }
+  const todos = arrOf('todos');
+  const open = todos.filter(x => !x.done).sort((a,b) => (PR_ORDER[a.priority] ?? 1) - (PR_ORDER[b.priority] ?? 1));
+  const done = todos.filter(x => x.done);
+  if (!todos.length){
+    box.innerHTML = '<div class="empty">✅ 还没有待办<br>下方输入框直接添加</div>';
+    return;
+  }
+  const row = (t) => {
+    const pr = PR_LABEL[t.priority] || 'P2';
+    return '<div class="todo' + (t.done ? ' done' : '') + '" data-id="' + esc(t.id || '') + '">' +
+      '<button class="cb" data-toggle="' + esc(t.id || '') + '">' + (t.done ? '✓' : '') + '</button>' +
+      '<div class="tt">' + esc(t.title) + (t.dueDate ? ' <span style="color:var(--mut);font-size:11px">' + esc(t.dueDate.slice(5)) + '</span>' : '') + '</div>' +
+      '<span class="pr pr-' + (t.priority || 'mid') + '">' + pr + '</span>' +
+      '<button class="del" data-del="' + esc(t.id || '') + '">✕</button></div>';
+  };
+  let html = '';
+  if (open.length) html += '<div class="sec-hd"><b>未完成</b><span>' + open.length + '</span></div>' + open.map(row).join('');
+  if (done.length) html += '<div class="sec-hd"><b>已完成</b><span>' + done.length + '</span></div>' + done.map(row).join('');
+  box.innerHTML = html;
+
+  box.querySelectorAll('.cb').forEach((b) => b.addEventListener('click', async () => {
+    const id = b.dataset.toggle;
+    const arr = arrOf('todos');
+    const idx = arr.findIndex(x => x.id === id);
+    if (idx < 0) return;
+    const next = arr.map((x, i) => i === idx ? Object.assign({}, x, { done: !x.done }) : x);
+    try { await putData('todos', next); renderTodos(); loadOverview(); }
+    catch (e) { toast('更新失败：' + e.message); }
+  }));
+  box.querySelectorAll('.del').forEach((b) => b.addEventListener('click', async () => {
+    const id = b.dataset.del;
+    const arr = arrOf('todos');
+    const idx = arr.findIndex(x => x.id === id);
+    if (idx < 0) return;
+    try { await putData('todos', arr.filter((_, i) => i !== idx)); renderTodos(); loadOverview(); }
+    catch (e) { toast('删除失败：' + e.message); }
+  }));
+}
+async function addTodo(){
+  const inp = $('todo-input');
+  const title = inp.value.trim();
+  if (!title) return;
+  const item = { id: Date.now().toString(36), title, priority: 'mid', dueDate: '', done: false, category: '', createdAt: Date.now() };
+  try {
+    await putData('todos', arrOf('todos').concat([item]));
+    inp.value = ''; renderTodos(); loadOverview();
+  } catch (e) { toast('添加失败：' + e.message); }
+}
+$('todo-add-btn').addEventListener('click', addTodo);
+$('todo-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') addTodo(); });
+
+/* =====================================================================
+   会话（GET/POST/DEL /api/sessions，GET /:id 加载 uiHistory）
+   ===================================================================== */
+function setSessTitle(t){ $('chat-sess-name').textContent = t || '新会话'; }
+async function loadSessList(){
+  const box = $('sess-list');
+  try {
+    const r = await fetch('/api/sessions');
+    if (!r.ok) throw new Error();
+    const j = await r.json();
+    const list = j.sessions || [];
+    if (!list.length){ box.innerHTML = '<div class="empty">暂无会话<br>点「＋ 新建会话」开始</div>'; return; }
+    box.innerHTML = list.map((s) =>
+      '<div class="sess' + (s.id === S.sessionId ? ' on' : '') + '" data-sid="' + esc(s.id) + '">' +
+        '<div class="si"><div class="st2">' + esc(s.title || '未命名') + '</div>' +
+        '<div class="ss">' + (s.messageCount || 0) + ' 条消息</div></div>' +
+        '<button class="sx" data-del="' + esc(s.id) + '">✕</button></div>').join('');
+    box.querySelectorAll('.sess').forEach((el) => el.addEventListener('click', async (e) => {
+      if (e.target.closest('[data-del]')) return;
+      await switchSession(el.dataset.sid);
+      closeSheet('sheet-sess');
+    }));
+    box.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const id = b.dataset.del;
+      if (!confirm('删除该会话？')) return;
+      try {
+        const r = await fetch('/api/sessions/' + encodeURIComponent(id), { method: 'DELETE' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        if (S.sessionId === id){ S.sessionId = null; S.sessTitle = null; clearChat(); setSessTitle('新会话'); }
+        loadSessList(); toast('已删除');
+      } catch (err) { toast('删除失败：' + err.message); }
+    }));
+  } catch { box.innerHTML = '<div class="empty">会话列表加载失败</div>'; }
+}
+$('chat-sess').addEventListener('click', () => { loadSessList(); openSheet('sheet-sess'); });
+$('sess-new').addEventListener('click', async () => {
+  try {
+    const r = await fetch('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    S.sessionId = j.session?.id || null;
+    S.sessTitle = j.session?.title || null;
+    clearChat(); setSessTitle(S.sessTitle || '新会话');
+    closeSheet('sheet-sess');
+  } catch (e) { toast('新建失败：' + e.message); }
+});
+
+/* =====================================================================
+   对话（POST /api/chat/stream，SSE 协议对齐 console.handleSse）
+   ===================================================================== */
+function clearChat(){
+  S.msgNodes = [];
+  $('chat-log').innerHTML = '';
+  $('chat-empty').style.display = '';
+}
+/* 轻量 markdown：**粗体** / `code` / ```块``` / 换行（先转义防 XSS） */
+function mdToDom(text){
+  const div = document.createElement('div');
+  const parts = String(text || '').split(/```/);
+  for (let i = 0; i < parts.length; i++){
+    if (i % 2 === 1){
+      const pre = document.createElement('pre'); pre.textContent = parts[i].replace(/^\w*\n/, '');
+      div.appendChild(pre);
+    } else {
+      const seg = document.createElement('span');
+      let h = esc(parts[i]).replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>').replace(/`([^`\n]+)`/g, '<code>$1</code>');
+      seg.innerHTML = h.replace(/\n/g, '<br>');
+      div.appendChild(seg);
+    }
+  }
+  return div;
+}
+function addMsg(kind){
+  $('chat-empty').style.display = 'none';
+  const log = $('chat-log');
+  const m = document.createElement('div');
+  m.className = 'msg ' + kind;
+  const who = document.createElement('div'); who.className = 'who';
+  who.textContent = kind === 'user' ? '我' : '枢';
+  const body = document.createElement('div'); body.className = 'body';
+  m.appendChild(who); m.appendChild(body);
+  log.appendChild(m);
+  log.scrollTop = log.scrollHeight;
+  return { el: m, body };
+}
+function addToolRow(name){
+  $('chat-empty').style.display = 'none';
+  const log = $('chat-log');
+  const r = document.createElement('div');
+  r.className = 'tool-row';
+  r.innerHTML = '<span class="tst">⏳</span><span class="tname">' + esc(name) + '</span>';
+  log.appendChild(r);
+  log.scrollTop = log.scrollHeight;
+  return r;
+}
+/* SSE 事件（协议同 console）：meta / delta / event(user|assistant|tool|tool_result) / done / error */
+function handleSse(j, ctx){
+  switch (j.type){
+    case 'meta':
+      if (j.sessionId && !S.sessionId){ S.sessionId = j.sessionId; }
+      break;
+    case 'delta': {
+      ctx.agentText += (j.text || '');
+      ctx.agent.body = '';
+      ctx.agent.body.appendChild(mdToDom(ctx.agentText));
+      if (ctx.agentText){
+        const cur = document.createElement('span'); cur.className = 'cursor';
+        ctx.agent.body.appendChild(cur);
+      }
+      const log = $('chat-log'); log.scrollTop = log.scrollHeight;
+      break;
+    }
+    case 'event': {
+      const ev = j.ev || {};
+      if (ev.type === 'tool'){
+        ctx.tools[ev.payload?.name] = addToolRow(ev.payload?.name || '?');
+      } else if (ev.type === 'tool_result'){
+        const row = ctx.tools[ev.payload?.name];
+        if (row){
+          row.classList.add(ev.payload?.error ? 'err' : 'ok');
+          row.querySelector('.tst').textContent = ev.payload?.error ? '✗' : '✓';
+          row.title = String(ev.payload?.result || ev.payload?.error || '').slice(0, 300);
+        }
+      }
+      break;
+    }
+    case 'done': {
+      ctx.done = true;
+      if (j.sessionId) S.sessionId = j.sessionId;
+      ctx.agent.body = '';
+      ctx.agent.body.appendChild(mdToDom(ctx.agentText));
+      if (!ctx.agentText.trim()){
+        ctx.agent.body.textContent = '（完成，无文本输出' +
+          (j.rounds !== undefined || j.toolCalls !== undefined ? ' — ' +
+            (j.rounds ?? 0) + ' 轮 / ' + (j.toolCalls ?? 0) + ' 次工具' : '') + '）';
+      }
+      const log = $('chat-log'); log.scrollTop = log.scrollHeight;
+      break;
+    }
+    case 'error': {
+      ctx.done = true;
+      ctx.agent.body.textContent = (ctx.agentText ? ctx.agentText + '\n\n' : '') + '❌ ' + (j.error || '未知错误');
+      break;
+    }
+  }
+}
+async function sendChat(){
+  const inp = $('chat-input');
+  const text = inp.value.trim();
+  if (!text || S.busy) return;
+  inp.value = ''; inp.style.height = 'auto';
+  S.busy = true;
+  $('chat-send').disabled = true;
+  const st = $('chat-status'); st.textContent = '思考中…'; st.classList.add('busy');
+  addMsg('user').body.textContent = text;
+  const ctx = { agent: addMsg('agent'), agentText: '', tools: {}, done: false };
+  ctx.agent.body.innerHTML = '<span class="cursor"></span>';
+  try {
+    const r = await fetch('/api/chat/stream', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: text, sessionId: S.sessionId }),
+    });
+    if (!r.ok || !r.body) throw new Error('HTTP ' + r.status);
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    for (;;){
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let sep;
+      while ((sep = buf.indexOf('\n\n')) >= 0){
+        const evt = buf.slice(0, sep); buf = buf.slice(sep + 2);
+        if (!evt.startsWith('data:')) continue;
+        let j; try { j = JSON.parse(evt.slice(5).trim()); } catch { continue; }
+        handleSse(j, ctx);
+      }
+    }
+    if (buf.trim().startsWith('data:')){
+      let j; try { j = JSON.parse(buf.trim().slice(5).trim()); } catch {}
+      if (j) handleSse(j, ctx);
+    }
+    if (!ctx.done){ ctx.agent.body.textContent = ctx.agentText || '（连接中断）'; }
+  } catch (e) {
+    ctx.agent.body.textContent = (ctx.agentText ? ctx.agentText + '\n\n' : '') + '❌ 请求失败：' + e.message;
+  } finally {
+    S.busy = false;
+    $('chat-send').disabled = false;
+    st.textContent = ''; st.classList.remove('busy');
+    loadOverview();
+  }
+}
+$('chat-send').addEventListener('click', sendChat);
+{
+  const inp = $('chat-input');
+  inp.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); sendChat(); }
+  });
+  inp.addEventListener('input', () => {
+    inp.style.height = 'auto';
+    inp.style.height = Math.min(inp.scrollHeight, 110) + 'px';
+  });
+}
+
+/* ---------- 切换会话：拉 uiHistory 还原 ---------- */
+async function switchSession(id){
+  try {
+    const r = await fetch('/api/sessions/' + encodeURIComponent(id));
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    S.sessionId = id;
+    clearChat();
+    const hist = j.session?.uiHistory || [];
+    for (const m of hist){
+      if (m.kind === 'user'){ addMsg('user').body.textContent = m.text || ''; }
+      else if (m.kind === 'assistant'){
+        const a = addMsg('agent'); a.body.appendChild(mdToDom(m.text || ''));
+      }
+      // 工具卡历史不还原（省流量），文本完整
+    }
+    S.sessTitle = j.session?.title;
+    setSessTitle(S.sessTitle);
+    const log = $('chat-log'); log.scrollTop = log.scrollHeight;
+  } catch (e) { toast('切换失败：' + e.message); }
+}
+
+/* =====================================================================
+   boot
+   ===================================================================== */
+function boot(){
+  $('ov-date').textContent = new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'short' });
+  loadOverview();
+  fetchData();
+  // 60s 轮询概览（手机端切回前台时也刷新）
+  setInterval(loadOverview, 60000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden){ loadOverview(); fetchData(); } });
+}
+document.readyState === 'loading' ? document.addEventListener('DOMContentLoaded', boot) : boot();
+</script>
+</body>
+</html>

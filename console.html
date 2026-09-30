@@ -699,6 +699,10 @@ html[data-theme="dark"] .tile .cover{opacity:.9}
    所有 /api 请求自动带 x-access-token 头；403 时提示输入并重载。
    ================================================================ */
 const PAA_TOKEN = (() => { try { return localStorage.getItem('paaToken') || ''; } catch { return ''; } })();
+/** 令牌写进 HttpOnly cookie：手机端 / 重复访问输一次，7 天免输 */
+function rememberLanToken(token){
+  return fetch('/api/lan/token', { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ token }) }).catch(() => null);
+}
 {
   const _fetch = window.fetch.bind(window);
   window.fetch = async (input, init) => {
@@ -710,9 +714,13 @@ const PAA_TOKEN = (() => { try { return localStorage.getItem('paaToken') || ''; 
       init.headers = h;
     }
     const res = await _fetch(input, init);
-    if (res.status === 403 && u.includes('/api/') && !u.includes('/api/auth/')) {
-      const t = prompt('PAA 服务器需要访问令牌（paa/data/lan.json 的 accessToken）：');
-      if (t) { try { localStorage.setItem('paaToken', t); } catch { /* 忽略 */ } location.reload(); }
+    if (res.status === 403 && u.includes('/api/') && !u.includes('/api/auth/') && !u.includes('/api/lan/')) {
+      const t = prompt('Yours 需要访问令牌（paa/data/lan.json 的 accessToken）：\n输入一次，这台设备 7 天内免输');
+      if (t) {
+        try { localStorage.setItem('paaToken', t); } catch { /* 忽略 */ }
+        await rememberLanToken(t);
+        location.reload();
+      }
     }
     return res;
   };
