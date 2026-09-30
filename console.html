@@ -107,13 +107,15 @@ main{flex:1;display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);mi
 #chatHead .sub{margin-left:8px;font-size:11px;color:var(--text2)}
 #clearBtn{margin-left:auto;font-size:11px;color:var(--text2);background:none;border:1px solid var(--line);border-radius:var(--r);padding:2px 10px;cursor:pointer;font-family:var(--disp);transition:color .15s,border-color .15s}
 #clearBtn:hover{color:var(--err);border-color:oklch(68% 0.15 25 / .45)}
+#sessBtn{font-size:11px;color:var(--text1);background:var(--bg2);border:1px solid var(--line);border-radius:var(--r);padding:2px 10px;cursor:pointer;font-family:var(--sans);transition:color .15s,border-color .15s;flex-shrink:0}
+#sessBtn:hover{color:var(--acc);border-color:var(--acc)}
 #stream{flex:1;overflow-y:auto;padding:18px 20px;display:flex;flex-direction:column;gap:14px;min-height:0}
 
 /* 消息 = 日志行（时间戳 + 方向符 + 内容），非气泡 */
-.msg{position:relative;padding-left:64px;animation:rise .22s cubic-bezier(.2,.7,.3,1)}
+.msg{position:relative;padding-left:72px;animation:rise .22s cubic-bezier(.2,.7,.3,1)}
 @keyframes rise{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
-.msg .ts{position:absolute;left:0;top:2px;font-family:var(--disp);font-size:10.5px;color:var(--text2);font-variant-numeric:tabular-nums;letter-spacing:.5px;width:44px;text-align:right}
-.msg .who{position:absolute;left:49px;top:0;font-size:10px;letter-spacing:1.5px;color:var(--text2)}
+.msg .ts{position:absolute;left:0;top:2px;font-family:var(--disp);font-size:10.5px;color:var(--text2);font-variant-numeric:tabular-nums;letter-spacing:.5px;width:52px;text-align:right}
+.msg .who{position:absolute;left:58px;top:0;font-size:10px;letter-spacing:1.5px;color:var(--text2)}
 .msg.user .who{color:var(--cool)}
 .msg.assistant .who{color:var(--acc)}
 .msg.tool .who{color:var(--text2)}
@@ -320,6 +322,8 @@ main{display:flex;min-height:0}
 /* 收起态竖排标签 */
 .rail{display:none;writing-mode:vertical-rl;letter-spacing:3px;font-family:var(--serif);font-size:10px;color:var(--text2);text-transform:uppercase;align-items:center;justify-content:center;cursor:pointer;height:100%;user-select:none}
 #app.collapse-chat #chat .rail,#app.collapse-panel #panel .rail{display:flex}
+/* 内层容器必须是 flex 列 + min-height:0，否则长对话会把输入框挤出屏幕（#stream 不滚动） */
+.chatInner,.panelInner{flex:1;min-height:0;display:flex;flex-direction:column}
 #app.collapse-chat #chat .chatInner,#app.collapse-panel #panel .panelInner{display:none}
 
 /* ================= v2 · segmented 视图切换 ================= */
@@ -428,6 +432,44 @@ main{display:flex;min-height:0}
 #sessionList li .xdel{opacity:0;border:none;background:none;color:inherit;cursor:pointer;font-size:11px;flex-shrink:0}
 #sessionList li:hover .xdel{opacity:.8}
 #sessionList li .xdel:hover{opacity:1;color:var(--err)}
+/* ================= 手机布局（≤760px）：对话 / 面板 两个整屏视图 + 底部切换栏 ================= */
+#mnav{display:none}
+@media (max-width:760px){
+  #app{height:100vh;height:100dvh}
+  header{gap:10px;padding:0 12px;padding-top:env(safe-area-inset-top);height:calc(46px + env(safe-area-inset-top))}
+  .brand .en,.clock,#lvBadge,#toolBadge{display:none}
+  .hright{gap:6px}
+  main{display:flex;flex-direction:column}
+  #resizer,.rail,.ctrl,#chatHead .ttl{display:none !important}
+  #chat,#panel{flex:1 1 auto !important;width:100%;min-height:0;border:none}
+  #app:not(.mv-panel) #panel{display:none}
+  #app.mv-panel #chat{display:none}
+  #app.collapse-chat #chat .chatInner,#app.collapse-panel #panel .panelInner{display:flex}
+  #chatHead{padding:8px 12px;gap:8px}
+  #chatHead .sub{margin-left:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  #stream{padding:14px 12px;gap:12px}
+  .msg{padding-left:0}
+  .msg .ts{position:static;display:inline;width:auto;margin-right:8px}
+  .msg .who{position:static;display:inline}
+  .msg .body{margin-top:4px}
+  .toolcard{margin-left:0}
+  #composer{padding:8px 12px 10px}
+  #composerHint{display:none}
+  #input{font-size:16px}   /* iOS：<16px 聚焦会自动放大页面 */
+  #tabs{padding:6px 8px 0}
+  .tab{padding:8px 11px;font-size:13px}
+  #panelBody{padding:12px 10px 20px}
+  .row3{grid-template-columns:1fr 1fr}
+  .confirm .cbtns{flex-wrap:wrap}
+  .confirm .cbtns .btn{padding:11px 0;font-size:14px}
+  #toast{bottom:calc(70px + env(safe-area-inset-bottom))}
+  #mnav{display:flex;flex-shrink:0;border-top:1px solid var(--line);background:var(--bg1);padding-bottom:env(safe-area-inset-bottom)}
+  #mnav button{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;height:52px;border:none;background:none;color:var(--text2);font-family:var(--sans);font-size:13px;letter-spacing:1px;cursor:pointer;position:relative}
+  #mnav button.on{color:var(--acc)}
+  #mnav button.on::before{content:"";position:absolute;top:-1px;left:30%;right:30%;height:2px;background:var(--acc)}
+  #mnav .unread{width:7px;height:7px;border-radius:50%;background:var(--acc);display:none}
+  #mnav .unread.show{display:inline-block}
+}
 </style>
 </head>
 <body>
@@ -509,6 +551,10 @@ main{display:flex;min-height:0}
       </div>
     </aside>
   </main>
+  <nav id="mnav" aria-label="视图切换">
+    <button data-mv="chat" class="on">对话<span class="unread" id="mnavUnread"></span></button>
+    <button data-mv="panel">面板</button>
+  </nav>
 </div>
 
 <div id="overlay">
@@ -581,7 +627,7 @@ const WDAY = ['日','一','二','三','四','五','六'];
 const S = {
   ws:null, connected:false, level:2, tools:[], pkgs:[], sessionId:null,
   data:null, msgs:[], busy:false, confirm:null, confirmTimer:null, confirmLeft:60,
-  tab:'schedule', runSeq:0, toastTimer:null,
+  tab:'schedule', runSeq:0, toastTimer:null, seenEvents:new Set(), toolRisk:{},
   chatW:55, collapse:null, full:null,   // 布局：chat 宽%、收起/全屏区
   view:{},                                // 各面板视图状态 { tab: {mode, date, sel, ...} }
 };
@@ -669,7 +715,16 @@ function twPump(){
   if (anim){ autoScroll(); requestAnimationFrame(twPump); }
   else S._twOn = false;
 }
-function pushMsg(m){ S.msgs.push(m); renderStream(); autoScroll(); }
+function pushMsg(m){
+  S.msgs.push(m); renderStream(); autoScroll();
+  // 手机上正看面板时来了新回复 → 对话按钮上亮个点
+  if (m.kind !== 'user' && document.getElementById('app').classList.contains('mv-panel')) $('#mnavUnread').classList.add('show');
+}
+function setMobileView(v){
+  document.getElementById('app').classList.toggle('mv-panel', v === 'panel');
+  document.querySelectorAll('#mnav button').forEach(b => b.classList.toggle('on', b.dataset.mv === v));
+  if (v === 'chat'){ $('#mnavUnread').classList.remove('show'); autoScroll(); }
+}
 function autoScroll(){
   const box = $('#stream');
   requestAnimationFrame(() => { box.scrollTop = box.scrollHeight; });
@@ -833,11 +888,13 @@ function handleWs(m){
     case 'welcome':
       S.sessionId = m.sessionId || S.sessionId;
       S.tools = m.tools || S.tools; S.pkgs = m.pkgs || S.pkgs;
+      S.toolRisk = m.risks || S.toolRisk;
       S.level = (m.level !== undefined) ? m.level : S.level;
       renderHeader(); break;
     case 'level': S.level = m.level; renderHeader(); break;
     case 'event':
-      if (m.event) handleEvent(m.event);
+      // server 推的是 {type:'event', ev}；本端 run 进行中时 SSE 已送达同一批事件
+      if (!S.busy) handleEvent(m.ev || m.event);
       break;
     case 'confirm': {
       S.confirm = { id: m.id, tool: m.tool, prompt: m.prompt, args: m.args };
@@ -869,11 +926,23 @@ function handleWs(m){
       console.debug('[audit]', m.line); break;
   }
 }
+/* 同一事件可能经 SSE 与 WS 各到一次（server 两路都推）：按事件身份去重 */
+function eventKey(ev){
+  const p = ev.payload || {};
+  return ev.ts + '|' + ev.type + '|' + (p.name || '') + '|' + String(p.text || p.content || '').length;
+}
 function handleEvent(ev, sseCard){
+  if (!ev || !ev.type) return;
+  const key = eventKey(ev);
+  if (S.seenEvents.has(key)) return;
+  S.seenEvents.add(key);
+  if (S.seenEvents.size > 500) S.seenEvents = new Set([...S.seenEvents].slice(-200));
   switch (ev.type){
     case 'user': {
-      const last = S.msgs[S.msgs.length-1];
-      if (last && last.kind==='user' && last.text === ev.payload.text) return;
+      // 本端发起的 run：send() 已经渲染过这条用户消息
+      if (sseCard) return;
+      const lastU = [...S.msgs].reverse().find(mm => mm.kind==='user');
+      if (lastU && lastU.text === ev.payload.text && Date.now() - lastU.ts < 60_000) return;
       pushMsg({kind:'user', text: ev.payload.text, ts: Date.now()});
       break;
     }
@@ -889,9 +958,16 @@ function handleEvent(ev, sseCard){
       pushMsg({kind:'assistant', text: content, mode: ev.payload.mode, ts: Date.now()});
       break;
     }
-    case 'tool':
-      pushMsg({kind:'tool', toolName: ev.payload.name, risk: ev.payload.risk, args: ev.payload.arguments, state:'run', ts: Date.now()});
+    case 'tool': {
+      // agent-loop 在工具执行完后才发 tool 事件，payload.result = {ok, data?, error?}
+      const r = ev.payload.result;
+      const card = {kind:'tool', toolName: ev.payload.name, risk: ev.payload.risk || S.toolRisk[ev.payload.name],
+        args: ev.payload.arguments, state: r ? (r.ok ? 'ok' : 'err') : 'run', ts: Date.now()};
+      if (r && r.ok) card.result = r.data;
+      if (r && !r.ok) card.err = r.error || '失败';
+      pushMsg(card);
       break;
+    }
     case 'tool_result':
       for (let i = S.msgs.length-1; i >= 0; i--){
         const mm = S.msgs[i];
@@ -1247,6 +1323,7 @@ function renderConfirm(){
   $('#confName').textContent = S.confirm.tool;
   $('#confPrompt').textContent = S.confirm.prompt || '允许执行该操作？';
   $('#confArgs').textContent = S.confirm.args ? (typeof S.confirm.args==='string'?S.confirm.args:JSON.stringify(S.confirm.args,null,2)) : '';
+  $('#confArgs').style.display = S.confirm.args ? '' : 'none';   // 参数已在 prompt 里时不显示空框
   $('#confCount').textContent = '将在 ' + S.confirmLeft + 's 后自动拒绝';
   ov.classList.add('show');
 }
@@ -2252,6 +2329,7 @@ function init(){
   $('#modalCancel').addEventListener('click', closeModal);
   $('#modal').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeModal(); });
   bindLayout();
+  document.querySelectorAll('#mnav button').forEach(b => b.addEventListener('click', () => setMobileView(b.dataset.mv)));
   tickClock(); setInterval(tickClock, 1000);
   pushMsg({kind:'sys', text:'枢 · PAA Console v1 — 数据层已文件化，对话与面板双向实时。试试：记录今晚睡眠 7.5 小时', ts: Date.now()});
   renderComposer(); renderHeader();

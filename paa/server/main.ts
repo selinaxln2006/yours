@@ -1125,6 +1125,7 @@ async function main(): Promise<void> {
       type: 'welcome',
       sessionId: serverSessionId,
       tools: pipeline.list().map((t) => t.name),
+      risks: Object.fromEntries(pipeline.list().map((t) => [t.name, t.risk])),
       pkgs: loadedPkgs.map((lp) => lp.manifest.name),
     });
     console.log(`[ws] 控制台已连接（${connections.size} 个）`);
