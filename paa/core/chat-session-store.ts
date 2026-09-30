@@ -64,13 +64,13 @@ export function messagesToUiHistory(messages: ChatMessage[]): UiMsg[] {
   const out: UiMsg[] = [];
   for (const m of messages) {
     if (m.role === 'user') {
-      out.push({ kind: 'user', text: m.content, ts: Date.now() });
+      out.push({ kind: 'user', text: m.content ?? '', ts: Date.now() });
     } else if (m.role === 'assistant') {
-      out.push({ kind: 'assistant', text: m.content, mode: null, ts: Date.now() });
+      out.push({ kind: 'assistant', text: m.content ?? '', mode: null, ts: Date.now() });
     } else if (m.role === 'tool') {
       // ChatMessage.tool.content = JSON 字符串（可能含截断的 result）
       let result: unknown = m.content;
-      try { result = JSON.parse(m.content); } catch { /* 保留原文 */ }
+      try { result = JSON.parse(m.content ?? ''); } catch { /* 保留原文 */ }
       const r = (typeof result === 'object' && result !== null ? result : {}) as {
         ok?: boolean;
         error?: unknown;
