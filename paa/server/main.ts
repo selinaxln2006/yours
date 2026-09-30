@@ -10,7 +10,7 @@
 // ============================================================
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, stat, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -24,7 +24,7 @@ import { JsonMemoryProvider, createDefaultPersonaSeed } from '../core/memory-pro
 import { FileArtifactProvider } from '../core/artifact-provider.ts';
 import { PkgLoader } from '../core/pkg-loader.ts';
 import { LifeStore, LIFE_KEYS, type LifeKey } from '../core/life-store.ts';
-import { ChatSessionStore } from '../core/chat-session-store.ts';
+import { ChatSessionStore, messagesToUiHistory } from '../core/chat-session-store.ts';
 import { acceptUpgrade, type WsConnection, type WsMessage } from '../core/ws.ts';
 import { createCoreTools } from '../tools/core-tools.ts';
 import { createMemoryTools } from '../tools/memory-tools.ts';
@@ -35,6 +35,7 @@ import { SupabaseAuth, AuthError, type AuthSession } from './auth.ts';
 import { SyncEngine, SyncState } from '../core/sync.ts';
 import { SupabaseSyncTransport } from './sync-rest.ts';
 import { SupabaseRealtime, type RealtimeState } from '../core/realtime.ts';
+import { checkRequestSource, generateAccessToken, redactSearch, tokenMatches } from './request-guard.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PAA_ROOT = path.resolve(__dirname, '..');
@@ -140,12 +141,23 @@ interface LanConfig {
 
 /** LAN 访问配置（paa/data/lan.json，gitignore 目录不入库）：lan:true → 绑 0.0.0.0；accessToken 非空 → /api 与 /ws 门禁 */
 async function loadLanConfig(): Promise<LanConfig> {
+  const file = path.join(PAA_ROOT, 'data', 'lan.json');
+  let raw: Partial<LanConfig> & Record<string, unknown>;
   try {
-    const raw = JSON.parse(await readFile(path.join(PAA_ROOT, 'data', 'lan.json'), 'utf8')) as Partial<LanConfig>;
-    return { lan: !!raw.lan, accessToken: typeof raw.accessToken === 'string' ? raw.accessToken : '' };
+    raw = JSON.parse(await readFile(file, 'utf8')) as Partial<LanConfig> & Record<string, unknown>;
   } catch {
     return { lan: false, accessToken: '' };
   }
+  const cfg = { lan: !!raw.lan, accessToken: typeof raw.accessToken === 'string' ? raw.accessToken.trim() : '' };
+  // LAN 模式绝不无令牌裸奔 0.0.0.0：自动生成令牌并写回 lan.json（手机端首次访问时输入一次）
+  if (cfg.lan && !cfg.accessToken) {
+    cfg.accessToken = generateAccessToken();
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, JSON.stringify({ ...raw, accessToken: cfg.accessToken }, null, 2) + '\n', 'utf8');
+    console.log(`[lan] lan.json 未配置 accessToken，已自动生成并写回 ${file}`);
+    console.log(`[lan] 手机端访问令牌: ${cfg.accessToken}`);
+  }
+  return cfg;
 }
 
 async function loadSupabaseConfig(): Promise<SupabaseConfig | null> {
@@ -288,14 +300,28 @@ function sanitize(key: string, value: unknown): unknown {
   return value;
 }
 
+/**
+ * 静态文件白名单：只发前端外壳。WORKSPACE_ROOT 是整个仓库，里面有 paa/config.json（API key）、
+ * paa/data/（生活数据、登录会话、lan.json 令牌）、paa/memory/ 等——绝不能按路径直出。
+ */
+function isPublicAsset(rel: string): boolean {
+  return (
+    rel === 'console.html' ||
+    rel === 'manifest.json' ||
+    rel === 'manifest.webmanifest' ||
+    rel === 'sw.js' ||
+    /^icons\/[a-z0-9-]+\.png$/.test(rel)
+  );
+}
+
 async function serveStatic(res: ServerResponse, urlPath: string): Promise<void> {
-  let rel = urlPath === '/' || urlPath === '' ? 'console.html' : urlPath.slice(1);
-  const file = path.resolve(WORKSPACE_ROOT, rel);
-  if (!file.startsWith(WORKSPACE_ROOT + path.sep) && file !== WORKSPACE_ROOT) {
-    res.writeHead(403);
-    res.end('forbidden');
+  const rel = urlPath === '/' || urlPath === '' ? 'console.html' : urlPath.slice(1);
+  if (!isPublicAsset(rel)) {
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('not found');
     return;
   }
+  const file = path.resolve(WORKSPACE_ROOT, rel);
   try {
     const s = await stat(file);
     if (!s.isFile()) throw new Error('not file');
@@ -561,13 +587,23 @@ async function main(): Promise<void> {
   const httpServer = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', `http://${HOST}:${PORT}`);
     const p = url.pathname;
-    console.log(`[http] ${req.method} ${p}${url.search ? '?' + url.search.slice(0, 80) : ''}`);
+    console.log(`[http] ${req.method} ${p}${url.search ? redactSearch(url.search).slice(0, 80) : ''}`);
 
     try {
+      // ---- 来源门禁：拒绝跨站网页 / DNS rebinding 发来的 API 请求（见 request-guard.ts）----
+      if (p.startsWith('/api/')) {
+        const rejected = checkRequestSource(req.headers, lanCfg.lan);
+        if (rejected) {
+          console.warn(`[http] 拒绝 ${req.method} ${p}: ${rejected}`);
+          sendJson(res, 403, { error: 'forbidden origin' });
+          return;
+        }
+      }
+
       // ---- LAN 门禁：配置了 accessToken 时，/api/*（除 /api/auth/*）必须带 token（header 或 ?token=）----
       if (lanCfg.accessToken && p.startsWith('/api/') && !p.startsWith('/api/auth/')) {
         const tok = req.headers['x-access-token'] ?? url.searchParams.get('token') ?? '';
-        if (tok !== lanCfg.accessToken) {
+        if (!tokenMatches(tok, lanCfg.accessToken)) {
           sendJson(res, 403, { error: 'access denied' });
           return;
         }
@@ -1040,8 +1076,15 @@ async function main(): Promise<void> {
       socket.destroy();
       return;
     }
+    // 来源门禁：WebSocket 不受同源策略保护，任意网页都能连——必须校验 Origin（跨站 WS 劫持）
+    const rejected = checkRequestSource(req.headers, lanCfg.lan);
+    if (rejected) {
+      console.warn(`[ws] 拒绝连接: ${rejected}`);
+      socket.destroy();
+      return;
+    }
     // LAN 门禁：配置了 accessToken 时，/ws 必须带 ?token=（WebSocket 握手无法自定义 header）
-    if (lanCfg.accessToken && wsUrl.searchParams.get('token') !== lanCfg.accessToken) {
+    if (lanCfg.accessToken && !tokenMatches(wsUrl.searchParams.get('token'), lanCfg.accessToken)) {
       socket.destroy();
       return;
     }

@@ -10,6 +10,7 @@
 
 import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import path from 'node:path';
+import { resolveInside } from './path-guard.ts';
 
 /** 产物元数据（index.json 的 value） */
 export interface ArtifactMeta {
@@ -49,13 +50,13 @@ export class FileArtifactProvider implements ArtifactProvider {
     this.indexPath = path.join(root, '.index.json');
   }
 
-  /** 路径校验：产物必须落在 root 内（防 ../ 逃逸） */
+  /** 路径校验：产物必须落在 root 内（防 ../ 与符号链接逃逸） */
   private resolve(rel: string): string {
-    const abs = path.resolve(this.root, rel);
-    if (abs !== this.root && !abs.startsWith(this.root + path.sep)) {
+    try {
+      return resolveInside(this.root, rel);
+    } catch {
       throw new Error(`产物路径超出根目录: ${rel}`);
     }
-    return abs;
   }
 
   private async loadIndex(): Promise<void> {
