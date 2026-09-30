@@ -1,103 +1,75 @@
-# 枢 · 生活工作台 (Shu Life Workbench)
+# 枢 · PAA（Personal AI Agent）
 
-> 一个把「生活」当系统来设计的集成式个人工作台。数据在你手里，界面克制而温暖。
+> a personal ai agent on your desktop —— 跑在你自己电脑上的个人 AI agent。数据在你手里。
 
-集成「今日生活指数、记账理财、减脂健身、养生习惯、日程统筹、待办事项、AI 助手」七大模块的单页 PWA 应用。单文件起步，逐步演进为云端同步 + 桌面应用。
+枢是一个本地运行的 AI agent：它能读写你的文件、执行命令、记住关于你的事、管理你的生活数据（记账 / 体重饮食 / 养生打卡 / 日程 / 待办 / 目标），并能把一个模糊的大目标拆成任务树自主执行。你可以在终端里用它，也可以在任意浏览器（包括局域网里的手机）打开控制台用它。
 
-## 功能一览
-
-| 模块 | 能力 |
-|------|------|
-| 今日生活指数 | 睡眠 / 运动 / 收支 / 日程 / 待办 / 心情 六维聚合，生成当日生活指数 |
-| 记账理财 | 收支记录、月度统计、投资分配视图、支出分类 |
-| 减脂健身 | 体重体脂趋势、饮食热量记录（月历 + 列表双视图）、运动计划、BMR/TDEE 自动计算 |
-| 养生习惯 | 睡眠 / 护肤 / 拉伸按摩 / 饮水 / 冥想 五项打卡，月历 + 横向 swipe 切换日期 |
-| 日程统筹 | 日 / 周 / 月三视图，24h 纵轴时段展示，支持重复事件（每周/每两周/每月/工作日/自定义） |
-| 待办事项 | 优先级待办清单（P0–P4），完成状态追踪 |
-| 目标拆解 | 设定减脂/储蓄/习惯/自定义目标，自动生成里程碑 + 待办，实时追踪进度 |
-| AI 助手 | 右下浮动 Tab + 全屏 chat 面板，自然语言识别 10 类意图，多意图跨模块同步写入，可选 LLM hybrid 二次识别 |
-
-### AI 助手能力
-
-- **自然语言输入**：「今天早上吃了三文鱼鸡蛋 200卡」「喝了养生茶」「跑了5公里」
-- **多意图识别**：一段话自动拆分多个动作，分别写入对应模块
-- **跨模块同步**：「喝养生茶」同时写入养生（饮水记录）+ 健身（饮食 snack 类别）
-- **时间词识别**：今天/昨天/明天/后天/前天 + 早上/中午/晚上 + 8点/8:30
-- **Hybrid 引擎**：默认纯正则规则（零成本），可选配置 LLM API 进行模糊话术二次识别
-- **确认机制**：解析结果弹出确认卡片，支持调整/取消
-
-## 技术架构
+## 组成
 
 ```
-┌──────────────────────────────────────────────────┐
-│  前端：原生 HTML + CSS + JS（零框架，单文件）       │
-│  index.html  ← 全部组件、图标、样式内联（~190KB）   │
-├──────────────────────────────────────────────────┤
-│  数据层：StorageAdapter（抽象接口）                │
-│  ├─ LocalAdapter  → localStorage                 │
-│  ├─ CloudAdapter  → Supabase（骨架已预留）        │
-│  └─ BroadcastChannel → 跨标签页实时同步            │
-├──────────────────────────────────────────────────┤
-│  PWA：manifest.json + service worker (v5)         │
-│  安装到主屏 · 离线可用 · 手机/电脑同源              │
-├──────────────────────────────────────────────────┤
-│  AI 层：规则引擎 + 可选 LLM API                    │
-│  agentParse() → 意图识别 → 确认卡片 → 写入数据     │
-└──────────────────────────────────────────────────┘
+paa/core/      大脑层（宿主无关）：AgentLoop 循环、Planner 任务树、工具管道 + 权限、
+               记忆（L0–L3 分层）、产物、会话事件溯源、生活数据 LifeStore、云同步
+paa/tools/     内置工具：fs_* / shell_run / memory_* / artifact_* / pkg_* / web_*
+paa/pkgs/      技能包（ToolPkg：manifest.json + impl.mjs），如 life 生活数据包
+paa/cli/       宿主 1：终端（交互 / --once / --goal 长任务 / --resume 续跑）
+paa/server/    宿主 2：控制台服务（HTTP + REST + WebSocket），默认 127.0.0.1:8765
+console.html   控制台前端（chat 主区 + 生活面板，唯一前端）
 ```
 
-- **数据主权**：默认全部数据仅存于浏览器 localStorage，JSON 可导出 / 合并导入 / 替换导入，每 20 条提醒备份；存储失败与数据损坏有明确提示与恢复路径。
-- **零依赖**：不依赖任何外部 CDN / 框架 / 字体，离线可用。
-- **隐私**：云端同步为可选项，凭据只存本地配置，绝不入库。
-- **跨标签页同步**：通过 BroadcastChannel 实现多标签页数据实时同步。
+- **零运行时依赖**：Node 直接运行 `.ts`（类型剥离），不需要构建；只有 `typescript` / `@types/node` 两个开发依赖。
+- **文件即数据**：记忆、产物、会话、生活数据都是 `paa/` 下的 JSON / JSONL 文件，全部在 `.gitignore` 里，不会进仓库。
+- **可选云同步**：登录 GitHub（Supabase 托管）后多设备同步生活数据，见 [docs/SUPABASE-SETUP.md](docs/SUPABASE-SETUP.md)。
 
 ## 快速开始
 
+需要 Node 24（22.18+ 也可以）。
+
 ```bash
-# 方式一：直接双击 index.html 用浏览器打开（基础功能）
-# 方式二：本地服务器（PWA / Service Worker 需要）
-node serve.cjs          # 推荐，自带 no-cache 头
-# 或
-python -m http.server 8765
-# 浏览器访问 http://localhost:8765
+cd paa
+npm install                     # 只装类型检查用的开发依赖
+cp config.example.json config.json
+# 编辑 config.json：apiUrl / apiKey / model（任意 OpenAI 兼容接口）
 ```
 
-### 启用 AI 助手（可选）
+终端：
 
-1. 打开应用 → 设置 → AI 助手配置
-2. 填入 LLM API 地址和 Key
-3. 未配置时自动降级为纯正则规则识别
-
-## 路线图
-
-- [x] v0.1 单文件 HTML 工作台（本地存储）
-- [x] v0.2 PWA 化（manifest + service worker + 图标系统 + 云同步架构预留）
-- [x] v0.3 月历化（通用月历组件 + 养生/健身/日程月历视图 + 横向 swipe）
-- [x] v0.4 AI 助手 Agent 化（底部输入框 + 自然语言识别 + 确认写入）
-- [x] v0.5 浮动 Tab + 全同步（右下 FAB + chat sheet + 多意图 + 24h 周视图 + 重复事件）
-- [x] v0.5.1 目标拆解（减脂/储蓄/习惯/自定义，自动生成里程碑 + 待办，实时进度追踪）
-- [ ] v0.6 云端同步（Supabase，多设备互通）
-- [ ] v0.7 Google Calendar OAuth 双向同步
-- [ ] v0.8 AI Agent 对话能力（不只识别，是真的 talk）
-- [ ] v0.9 目标拆解（「我要瘦身 5kg」→ 自动生成待办/日程/复盘点）
-- [ ] v1.0 桌面应用（Tauri）— 见 [docs/TAURI_ROADMAP.md](docs/TAURI_ROADMAP.md)
-
-## 数据结构
-
+```bash
+node cli/main.ts                                  # 交互
+node cli/main.ts --once "今天的待办有哪些？"         # 问一次就退出
+node cli/main.ts --goal "整理 docs 目录并写一份索引"  # 长任务：拆任务树后自主执行
+node cli/main.ts --resume <sessionId>             # 从断点续跑长任务
+node cli/main.ts --agent reviewer --once "审查 core/planner.ts"   # 只读评审角色
 ```
-Store.data = {
-  weights: []        // 体重记录
-  meals: []          // 饮食记录
-  exercises: []      // 运动记录
-  finance: []        // 收支记录
-  wellness: {}       // 养生打卡（睡眠/护肤/拉伸/饮水/冥想）
-  schedule: []       // 日程（含 rrule 重复规则）
-  todos: []          // 待办
-  goals: []          // 目标（含里程碑 + 自动追踪）
-  chatHistory: []    // AI 助手聊天记录
-  settings: {}       // 用户设置（主题等）
-}
+
+控制台：
+
+```bash
+node server/main.ts             # 然后浏览器打开 http://127.0.0.1:8765
 ```
+
+Windows 开机自启与崩溃看门狗脚本在 `tools/`（`register-startup.ps1` / `register-tasks.ps1`）。
+
+## 安全模型
+
+| 机制 | 说明 |
+| --- | --- |
+| 权限分级 | 工具按风险 1–4 分级；Autonomy L0–L4 决定哪些自动放行。写操作默认要你确认，`shell_run` 与 `memory_forget` **永远**要确认 |
+| 沙箱 | 文件工具只能访问沙箱根目录（CLI 用 `--root` 指定）；越界路径和指向外部的符号链接都会被拒 |
+| 命令黑名单 | `rm -rf`、`format`、`shutdown` 等直接拒绝（只是减速带，真正的防线是确认） |
+| 本机 server | 只接受同源请求：其他网站不能调用 API，也不能连 WebSocket 替你点"允许" |
+| 静态文件 | server 只提供前端文件；`config.json`、生活数据、登录会话不会通过 HTTP 暴露 |
+| 手机访问 | `paa/data/lan.json` 设 `{"lan": true}` 后绑定局域网；必须有访问令牌，未配置时启动会自动生成并打印 |
+| 密钥 | `paa/config.json`、`paa/data/` 都不入库 |
+
+## 开发
+
+```bash
+cd paa
+npm run check    # 类型检查（改完必跑）
+npm test         # 单元测试
+```
+
+协作约定见 [AGENTS.md](AGENTS.md)，全量规划与进度见 [docs/ROADMAP.md](docs/ROADMAP.md)，架构文档在 [docs/architecture/](docs/architecture/)。
 
 ## 许可
 

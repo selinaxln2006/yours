@@ -26,7 +26,8 @@ paa/                        # PAA 大脑层（TS ESM，Node 24 直接跑 .ts，�
 │   ├── planner.ts          # ★ Task Decomposition：模糊目标→任务树→子任务队列（goal-level 主引擎）
 │   ├── tool-pipeline.ts    # 工具管道：register/unregister/list + 权限门 + 审计
 │   ├── permission.ts       # Autonomy L0-L4 + FORBID 硬名单
-│   ├── llm-adapter.ts      # LLM 适配（OpenAI 兼容 + Anthropic 双协议）
+│   ├── path-guard.ts       # 沙箱路径解析（防 ../ 与符号链接逃逸，fs 工具/产物共用）
+│   ├── llm-adapter.ts      # LLM 适配（目前仅 OpenAI 兼容协议）
 │   ├── session-mgr.ts      # run 事件溯源（runs/<sid>/events.jsonl，append-only）
 │   ├── chat-session-store.ts # console 会话持久化（T1 数据层种子，多会话）
 │   ├── life-store.ts       # 生活数据 18 键分文件 JSON（原子写/损坏自愈/tx）
@@ -40,7 +41,8 @@ paa/                        # PAA 大脑层（TS ESM，Node 24 直接跑 .ts，�
 │   ├── main.ts             # 入口：--once / --goal / --agent / --yes 等
 │   └── render.ts           # 终端渲染
 ├── server/                 # 宿主 2：console server（127.0.0.1:8765）
-│   └── main.ts             # HTTP 静态+REST+WS+chat
+│   ├── main.ts             # HTTP 静态+REST+WS+chat
+│   └── request-guard.ts    # 来源门禁（Origin/Host 校验、LAN 令牌）——改 server 路由别绕过它
 ├── tools/                  # 内置工具组（注入到 pipeline）
 │   ├── core-tools.ts       # fs_read/write/append/patch/list/grep + shell_run（沙箱+黑名单）
 │   ├── memory-tools.ts     # memory_search/list/save/consolidate/forget
