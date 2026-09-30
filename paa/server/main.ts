@@ -10,7 +10,8 @@
 // ============================================================
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { readFile, stat, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, stat, writeFile, mkdir, mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -36,10 +37,18 @@ import { SyncEngine, SyncState } from '../core/sync.ts';
 import { SupabaseSyncTransport } from './sync-rest.ts';
 import { SupabaseRealtime, type RealtimeState } from '../core/realtime.ts';
 import { checkRequestSource, generateAccessToken, redactSearch, tokenMatches } from './request-guard.ts';
+import { DemoAdapter, seedDemoData } from './demo.ts';
+import { turnMessages } from './turn.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PAA_ROOT = path.resolve(__dirname, '..');
 const WORKSPACE_ROOT = path.resolve(PAA_ROOT, '..');
+/** 演示模式：--demo 或 PAA_DEMO=1。不读 config.json，数据与 agent 工作区都放临时目录 */
+const DEMO = process.argv.includes('--demo') || process.env.PAA_DEMO === '1';
+/** 运行时数据根（data/memory/artifacts/runs）；演示模式下指向临时目录，main() 里确定 */
+let DATA_ROOT = PAA_ROOT;
+/** agent 文件/命令工具的沙箱根；演示模式下是临时目录里的 workspace，不碰仓库 */
+let AGENT_ROOT = WORKSPACE_ROOT;
 
 // ---- 参数：--port N / PAA_PORT（默认 8765 = 旧 serve.cjs 同源端口） ----
 function resolvePort(): number {
@@ -349,32 +358,38 @@ async function serveStatic(res: ServerResponse, urlPath: string): Promise<void> 
 
 // ---- 主流程 ----
 async function main(): Promise<void> {
-  const llmConfig = await loadLlmConfig();
-  if (!llmConfig) {
+  if (DEMO){
+    DATA_ROOT = await mkdtemp(path.join(tmpdir(), 'yours-demo-'));
+    AGENT_ROOT = path.join(DATA_ROOT, 'workspace');
+    await mkdir(AGENT_ROOT, { recursive: true });
+  }
+  const llmConfig = DEMO ? null : await loadLlmConfig();
+  if (!llmConfig && !DEMO) {
     console.error('❌ 未找到有效 paa/config.json（需要 apiUrl + apiKey）');
     process.exit(1);
   }
 
   // ---- LAN 访问（手机端）：lan.json lan:true → 绑 0.0.0.0 + /api 与 /ws 门禁 ----
-  const lanCfg = await loadLanConfig();
+  const lanCfg = DEMO ? { lan: false, accessToken: '' } : await loadLanConfig();
   if (lanCfg.lan) HOST = '0.0.0.0';
 
   // ---- S1：Supabase Auth（GitHub OAuth，PKCE）----
-  const supabaseConfig = await loadSupabaseConfig();
+  const supabaseConfig = DEMO ? null : await loadSupabaseConfig();
   const auth = supabaseConfig
     ? new SupabaseAuth({
         projectUrl: supabaseConfig.url,
         publishableKey: supabaseConfig.publishableKey,
         callbackUrl: `http://${HOST}:${PORT}/api/auth/callback`,
-        sessionDir: path.join(PAA_ROOT, 'data', 'auth', 'sessions'),
-        userDir: path.join(PAA_ROOT, 'data', 'auth', 'users'),
+        sessionDir: path.join(DATA_ROOT, 'data', 'auth', 'sessions'),
+        userDir: path.join(DATA_ROOT, 'data', 'auth', 'users'),
       })
     : null;
   await auth?.init();
 
   // 数据层
-  const lifeStore = new LifeStore(path.join(PAA_ROOT, 'data', 'life'));
+  const lifeStore = new LifeStore(path.join(DATA_ROOT, 'data', 'life'));
   await lifeStore.init();
+  if (DEMO) await seedDemoData(lifeStore);
 
   // ---- S2：云同步状态（登录后按用户启用；本地为 source of truth，云端镜像）----
   let syncState: SyncState | null = null;
@@ -493,7 +508,7 @@ async function main(): Promise<void> {
       ensureRealtime(); // 引擎可复用，但 Realtime 可能还没起（如 server 重启后第一次 me）
       return;
     }
-    const state = new SyncState(path.join(PAA_ROOT, 'data', 'sync'));
+    const state = new SyncState(path.join(DATA_ROOT, 'data', 'sync'));
     await state.init();
     const transport = new SupabaseSyncTransport({
       projectUrl: supabaseConfig.url,
@@ -519,18 +534,18 @@ async function main(): Promise<void> {
   }
 
   // 对话会话 store（data/sessions/*，启动加载 + 原子写持久化 + 损坏自愈）
-  chatStore = new ChatSessionStore(path.join(PAA_ROOT, 'data', 'sessions'));
+  chatStore = new ChatSessionStore(path.join(DATA_ROOT, 'data', 'sessions'));
   await chatStore.init();
 
   // 大脑层
   const memory = new JsonMemoryProvider({
-    filePath: path.join(PAA_ROOT, 'memory', 'store.json'),
+    filePath: path.join(DATA_ROOT, 'memory', 'store.json'),
     seed: createDefaultPersonaSeed(),
   });
   await memory.init();
-  const artifacts = new FileArtifactProvider(path.join(PAA_ROOT, 'artifacts'));
+  const artifacts = new FileArtifactProvider(path.join(DATA_ROOT, 'artifacts'));
 
-  const session = new SessionMgr(path.join(PAA_ROOT, 'runs'));
+  const session = new SessionMgr(path.join(DATA_ROOT, 'runs'));
   const serverSessionId = await session.newSession();
 
   const audit = (line: string): void => {
@@ -540,7 +555,7 @@ async function main(): Promise<void> {
   const permission = new Permission(2); // 默认 L2：读自动，写确认（控制台可视调节）
   const pipeline = new ToolPipeline(permission);
   isTrustable = (tool) => (pipeline.get(tool)?.risk ?? 4) < 4;
-  for (const t of createCoreTools(WORKSPACE_ROOT)) pipeline.register(t);
+  for (const t of createCoreTools(AGENT_ROOT)) pipeline.register(t);
   for (const t of createMemoryTools(memory)) pipeline.register(t);
   for (const t of createArtifactTools(artifacts)) pipeline.register(t);
   for (const t of createWebTools()) pipeline.register(t);
@@ -551,7 +566,7 @@ async function main(): Promise<void> {
     pipeline,
     permission,
     env: {
-      root: WORKSPACE_ROOT,
+      root: AGENT_ROOT,
       pkgDir: path.join(PAA_ROOT, 'pkgs'),
       audit,
       services: { lifeStore },
@@ -564,7 +579,7 @@ async function main(): Promise<void> {
     console.error(`工具包 ${name} 加载失败: ${why}`);
   }
 
-  const adapter = createAdapter(llmConfig);
+  const adapter = DEMO || !llmConfig ? new DemoAdapter() : createAdapter(llmConfig);
   const toolsDesc = pipeline
     .list()
     .map((t) => `- ${t.name}：${t.desc}（risk ${t.risk}）`)
@@ -624,6 +639,7 @@ async function main(): Promise<void> {
       if (p === '/api/health' && req.method === 'GET') {
         sendJson(res, 200, {
           ok: true,
+          demo: DEMO,
           port: PORT,
           level: permission.level,
           tools: pipeline.list().map((t) => ({ name: t.name, risk: t.risk })),
@@ -917,17 +933,18 @@ async function main(): Promise<void> {
         }
         const ctx = {
           sessionId: serverSessionId,
-          cwd: WORKSPACE_ROOT,
+          cwd: AGENT_ROOT,
           ask: askOverWs,
           audit,
         };
         const runP = chatQueue.then(async () => {
+          const prior = rec.messages.slice(-MAX_HISTORY);
           const result = await loop.run(message, ctx, {
-            prior: rec.messages.slice(-MAX_HISTORY),
+            prior,
             onEvent: (ev) => broadcast({ type: 'event', ev }),
           });
-          const uiHistory = messagesToUiHistory(result.messages ?? []);
-          const updated = await chatStore.append(sid, result.messages ?? [], uiHistory);
+          const fresh = turnMessages(result.messages ?? [], prior, message);
+          const updated = await chatStore.append(sid, fresh, messagesToUiHistory(fresh));
           return {
             ok: true,
             sessionId: sid,
@@ -957,20 +974,21 @@ async function main(): Promise<void> {
         const chatSession = await getChatSession(body.sessionId);
         const ctx = {
           sessionId: serverSessionId,
-          cwd: WORKSPACE_ROOT,
+          cwd: AGENT_ROOT,
           ask: askOverWs,
           audit,
         };
         // 串行执行（同一 loop 不可并发）
         const runP = chatQueue.then(async () => {
+          const prior = chatSession.messages.slice(-MAX_HISTORY);
           const result = await loop.run(message, ctx, {
-            prior: chatSession.messages.slice(-MAX_HISTORY),
+            prior,
             onEvent: (ev) => broadcast({ type: 'event', ev }),
           });
-          // 更新会话历史（去 system 的完整轨迹）→ 持久化到 store
-          const uiHistory = messagesToUiHistory(result.messages ?? []);
-          await chatStore.append(chatSession.id, result.messages ?? [], uiHistory);
-          chatSession.messages = (chatSession.messages ?? []).concat(result.messages ?? []).slice(-MAX_HISTORY);
+          // 只持久化本轮新增（去 system）；result.messages 含 prior，整段 append 会翻倍
+          const fresh = turnMessages(result.messages ?? [], prior, message);
+          await chatStore.append(chatSession.id, fresh, messagesToUiHistory(fresh));
+          chatSession.messages = (chatSession.messages ?? []).concat(fresh).slice(-MAX_HISTORY);
           return {
             ok: true,
             sessionId: chatSession.id,
@@ -999,7 +1017,7 @@ async function main(): Promise<void> {
         const chatSession = await getChatSession(body.sessionId);
         const ctx = {
           sessionId: serverSessionId,
-          cwd: WORKSPACE_ROOT,
+          cwd: AGENT_ROOT,
           ask: askOverWs,
           audit,
         };
@@ -1026,8 +1044,9 @@ async function main(): Promise<void> {
         });
 
         const runP = chatQueue.then(async () => {
+          const prior = chatSession.messages.slice(-MAX_HISTORY);
           const result = await loop.run(message, ctx, {
-            prior: chatSession.messages.slice(-MAX_HISTORY),
+            prior,
             onDelta: (text) => {
               if (!closed) sse({ type: 'delta', text });
             },
@@ -1037,8 +1056,9 @@ async function main(): Promise<void> {
             },
           });
           // 与 /api/chat 一致：落盘本轮轨迹（此前 console 的流式对话从不保存，刷新/切会话即丢失）
-          await chatStore.append(chatSession.id, result.messages ?? [], messagesToUiHistory(result.messages ?? []));
-          chatSession.messages = (chatSession.messages ?? []).concat(result.messages ?? []).slice(-MAX_HISTORY);
+          const fresh = turnMessages(result.messages ?? [], prior, message);
+          await chatStore.append(chatSession.id, fresh, messagesToUiHistory(fresh));
+          chatSession.messages = (chatSession.messages ?? []).concat(fresh).slice(-MAX_HISTORY);
           return result;
         });
         chatQueue = runP.catch(() => undefined);
@@ -1128,6 +1148,7 @@ async function main(): Promise<void> {
       sessionId: serverSessionId,
       tools: pipeline.list().map((t) => t.name),
       risks: Object.fromEntries(pipeline.list().map((t) => [t.name, t.risk])),
+      demo: DEMO,
       pkgs: loadedPkgs.map((lp) => lp.manifest.name),
     });
     console.log(`[ws] 控制台已连接（${connections.size} 个）`);
@@ -1150,6 +1171,7 @@ async function main(): Promise<void> {
     console.log('│  PAA Console Server                          │');
   console.log(`│  入口     http://${HOST}:${PORT}/            │`);
     console.log(`│  Autonomy L2（risk3 写操作推确认卡）          │`);
+    if (DEMO) console.log(`│  演示模式：脚本化回复，数据在 ${DATA_ROOT}`);
     console.log(`│  工具 ${pipeline.list().length} 个 · 包 ${loadedPkgs.map((l) => l.manifest.name).join(',') || '无'}              `);
     console.log('╰──────────────────────────────────────────────╯');
   });
