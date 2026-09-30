@@ -49,6 +49,9 @@ interface PhxMessage {
     status?: string;
     response?: unknown;
     data?: { type?: string; table?: string };
+    /** 出站 phx_join 用 */
+    config?: unknown;
+    access_token?: string;
   };
   ref?: string;
 }

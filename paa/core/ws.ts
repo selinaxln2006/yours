@@ -8,6 +8,7 @@
 
 import { createHash } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
+import type { Socket } from 'node:net';
 import type { Duplex } from 'node:stream';
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
@@ -190,6 +191,7 @@ export function acceptUpgrade(req: IncomingMessage, socket: Duplex): WsConnectio
       `Sec-WebSocket-Accept: ${accept}\r\n` +
       '\r\n',
   );
-  socket.setNoDelay(true);
+  // upgrade 事件给的是 net.Socket（类型上声明为 Duplex）
+  (socket as Socket).setNoDelay?.(true);
   return new WsConnection(socket);
 }

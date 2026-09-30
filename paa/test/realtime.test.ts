@@ -48,7 +48,7 @@ interface Harness {
 }
 
 function makeHarness(opts?: Partial<{ token: string | null }>): Harness {
-  const token = opts && 'token' in opts ? opts.token : 'tok-1';
+  const token = opts && 'token' in opts ? (opts.token ?? null) : 'tok-1';
   const fakes: FakeWS[] = [];
   const changes: string[] = [];
   const sub = new SupabaseRealtime({

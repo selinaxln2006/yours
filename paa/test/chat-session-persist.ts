@@ -20,7 +20,7 @@ test('t4 重启持久化：会话与消息在重启后仍可从磁盘恢复', as
 
   const msgs: ChatMessage[] = [
     { role: 'user', content: '你好，帮我记录今天的体重' },
-    { role: 'assistant', content: '好的，请告诉我今天的体重数值。', refs: [] },
+    { role: 'assistant', content: '好的，请告诉我今天的体重数值。' },
   ];
   const ui: UiMsg[] = [
     { kind: 'user', text: '你好，帮我记录今天的体重', ts: Date.now() },
@@ -55,7 +55,7 @@ test('t4 重启持久化：会话与消息在重启后仍可从磁盘恢复', as
 
   // 重启后还能继续追加（数据不丢也不冲突）
   const again = await storeB.append(rec.id, [
-    { role: 'user', content: '57.5kg', refs: [] },
+    { role: 'user', content: '57.5kg' },
   ], [{ kind: 'user', text: '57.5kg', ts: Date.now() }]);
   assert.equal(again!.messages.length, 3, '重启后追加应生效');
 

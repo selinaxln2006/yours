@@ -11,5 +11,5 @@
     "forceConsistentCasingInFileNames": true,
     "types": ["node"]
   },
-  "include": ["core/**/*.ts", "cli/**/*.ts", "tools/**/*.ts", "test/**/*.ts"]
+  "include": ["core/**/*.ts", "cli/**/*.ts", "server/**/*.ts", "tools/**/*.ts", "test/**/*.ts", "scripts/**/*.ts"]
 }

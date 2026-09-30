@@ -10,7 +10,8 @@
 // ============================================================
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, stat, writeFile, mkdir, mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -24,7 +25,7 @@ import { JsonMemoryProvider, createDefaultPersonaSeed } from '../core/memory-pro
 import { FileArtifactProvider } from '../core/artifact-provider.ts';
 import { PkgLoader } from '../core/pkg-loader.ts';
 import { LifeStore, LIFE_KEYS, type LifeKey } from '../core/life-store.ts';
-import { ChatSessionStore } from '../core/chat-session-store.ts';
+import { ChatSessionStore, messagesToUiHistory } from '../core/chat-session-store.ts';
 import { acceptUpgrade, type WsConnection, type WsMessage } from '../core/ws.ts';
 import { createCoreTools } from '../tools/core-tools.ts';
 import { createMemoryTools } from '../tools/memory-tools.ts';
@@ -35,12 +36,21 @@ import { SupabaseAuth, AuthError, type AuthSession } from './auth.ts';
 import { SyncEngine, SyncState } from '../core/sync.ts';
 import { SupabaseSyncTransport } from './sync-rest.ts';
 import { SupabaseRealtime, type RealtimeState } from '../core/realtime.ts';
+import { checkRequestSource, generateAccessToken, redactSearch, tokenMatches } from './request-guard.ts';
+import { DemoAdapter, seedDemoData } from './demo.ts';
+import { turnMessages } from './turn.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PAA_ROOT = path.resolve(__dirname, '..');
 const WORKSPACE_ROOT = path.resolve(PAA_ROOT, '..');
+/** 演示模式：--demo 或 PAA_DEMO=1。不读 config.json，数据与 agent 工作区都放临时目录 */
+const DEMO = process.argv.includes('--demo') || process.env.PAA_DEMO === '1';
+/** 运行时数据根（data/memory/artifacts/runs）；演示模式下指向临时目录，main() 里确定 */
+let DATA_ROOT = PAA_ROOT;
+/** agent 文件/命令工具的沙箱根；演示模式下是临时目录里的 workspace，不碰仓库 */
+let AGENT_ROOT = WORKSPACE_ROOT;
 
-// ---- 参数：--port N / PAA_PORT（默认 8765 = 旧 serve.cjs 同源端口） ----
+// ---- 参数：--port N / PAA_PORT（默认 8765） ----
 function resolvePort(): number {
   const argv = process.argv;
   for (let i = 0; i < argv.length; i++) {
@@ -140,12 +150,23 @@ interface LanConfig {
 
 /** LAN 访问配置（paa/data/lan.json，gitignore 目录不入库）：lan:true → 绑 0.0.0.0；accessToken 非空 → /api 与 /ws 门禁 */
 async function loadLanConfig(): Promise<LanConfig> {
+  const file = path.join(PAA_ROOT, 'data', 'lan.json');
+  let raw: Partial<LanConfig> & Record<string, unknown>;
   try {
-    const raw = JSON.parse(await readFile(path.join(PAA_ROOT, 'data', 'lan.json'), 'utf8')) as Partial<LanConfig>;
-    return { lan: !!raw.lan, accessToken: typeof raw.accessToken === 'string' ? raw.accessToken : '' };
+    raw = JSON.parse(await readFile(file, 'utf8')) as Partial<LanConfig> & Record<string, unknown>;
   } catch {
     return { lan: false, accessToken: '' };
   }
+  const cfg = { lan: !!raw.lan, accessToken: typeof raw.accessToken === 'string' ? raw.accessToken.trim() : '' };
+  // LAN 模式绝不无令牌裸奔 0.0.0.0：自动生成令牌并写回 lan.json（手机端首次访问时输入一次）
+  if (cfg.lan && !cfg.accessToken) {
+    cfg.accessToken = generateAccessToken();
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, JSON.stringify({ ...raw, accessToken: cfg.accessToken }, null, 2) + '\n', 'utf8');
+    console.log(`[lan] lan.json 未配置 accessToken，已自动生成并写回 ${file}`);
+    console.log(`[lan] 手机端访问令牌: ${cfg.accessToken}`);
+  }
+  return cfg;
 }
 
 async function loadSupabaseConfig(): Promise<SupabaseConfig | null> {
@@ -182,10 +203,14 @@ const connections = new Set<WsConnection>();
 interface PendingConfirm {
   resolve: (ok: boolean) => void;
   timer: ReturnType<typeof setTimeout>;
+  /** 发起确认的工具名（"总是允许"以此为准，不信任客户端回传的 tool 字段） */
+  tool?: string;
 }
 const pendingConfirms = new Map<string, PendingConfirm>();
 /** 会话级放行（所有连接共享；单用户本地场景） */
 const trustedTools = new Set<string>();
+/** 能否被"总是允许"：risk 4 危险工具永远逐次确认（权限红线）。main() 里注入真实判定 */
+let isTrustable: (tool: string) => boolean = () => false;
 
 function broadcast(obj: unknown): void {
   for (const c of connections) c.sendJson(obj);
@@ -203,7 +228,7 @@ function askOverWs(prompt: string, toolName?: string): Promise<boolean> {
       broadcast({ type: 'confirm_timeout', id });
       resolve(false);
     }, CONFIRM_TIMEOUT_MS);
-    pendingConfirms.set(id, { resolve, timer });
+    pendingConfirms.set(id, { resolve, timer, tool: toolName });
     broadcast({ type: 'confirm', id, tool: toolName ?? '?', prompt, connections: connections.size });
     if (connections.size === 0) {
       // 没有控制台连着：直接拒绝（安全默认）
@@ -214,18 +239,24 @@ function askOverWs(prompt: string, toolName?: string): Promise<boolean> {
   });
 }
 
+/** 应答一张确认卡（WS 消息与 POST /api/confirm 共用）。返回是否找到对应的待确认项 */
+function answerConfirm(id: string, ok: boolean, always: boolean): boolean {
+  const p = pendingConfirms.get(id);
+  if (!p) return false;
+  pendingConfirms.delete(id);
+  clearTimeout(p.timer);
+  if (ok && always && p.tool && isTrustable(p.tool)) {
+    trustedTools.add(p.tool);
+    broadcast({ type: 'trusted', tool: p.tool });
+  }
+  broadcast({ type: 'confirm_done', id, ok });
+  p.resolve(ok);
+  return true;
+}
+
 function handleWsMessage(conn: WsConnection, msg: WsMessage): void {
   if (msg.type === 'confirm' && typeof msg.id === 'string') {
-    const p = pendingConfirms.get(msg.id);
-    if (!p) return;
-    pendingConfirms.delete(msg.id);
-    clearTimeout(p.timer);
-    const ok = msg.ok === true;
-    if (ok && msg.always === true && typeof msg.tool === 'string') {
-      trustedTools.add(msg.tool);
-      broadcast({ type: 'trusted', tool: msg.tool });
-    }
-    p.resolve(ok);
+    answerConfirm(msg.id, msg.ok === true, msg.always === true);
     return;
   }
   if (msg.type === 'ping') {
@@ -288,14 +319,26 @@ function sanitize(key: string, value: unknown): unknown {
   return value;
 }
 
+/**
+ * 静态文件白名单：只发前端外壳。WORKSPACE_ROOT 是整个仓库，里面有 paa/config.json（API key）、
+ * paa/data/（生活数据、登录会话、lan.json 令牌）、paa/memory/ 等——绝不能按路径直出。
+ */
+function isPublicAsset(rel: string): boolean {
+  return (
+    rel === 'console.html' ||
+    rel === 'manifest.webmanifest' ||
+    /^icons\/[a-z0-9-]+\.png$/.test(rel)
+  );
+}
+
 async function serveStatic(res: ServerResponse, urlPath: string): Promise<void> {
-  let rel = urlPath === '/' || urlPath === '' ? 'console.html' : urlPath.slice(1);
-  const file = path.resolve(WORKSPACE_ROOT, rel);
-  if (!file.startsWith(WORKSPACE_ROOT + path.sep) && file !== WORKSPACE_ROOT) {
-    res.writeHead(403);
-    res.end('forbidden');
+  const rel = urlPath === '/' || urlPath === '' ? 'console.html' : urlPath.slice(1);
+  if (!isPublicAsset(rel)) {
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('not found');
     return;
   }
+  const file = path.resolve(WORKSPACE_ROOT, rel);
   try {
     const s = await stat(file);
     if (!s.isFile()) throw new Error('not file');
@@ -313,32 +356,38 @@ async function serveStatic(res: ServerResponse, urlPath: string): Promise<void> 
 
 // ---- 主流程 ----
 async function main(): Promise<void> {
-  const llmConfig = await loadLlmConfig();
-  if (!llmConfig) {
+  if (DEMO){
+    DATA_ROOT = await mkdtemp(path.join(tmpdir(), 'yours-demo-'));
+    AGENT_ROOT = path.join(DATA_ROOT, 'workspace');
+    await mkdir(AGENT_ROOT, { recursive: true });
+  }
+  const llmConfig = DEMO ? null : await loadLlmConfig();
+  if (!llmConfig && !DEMO) {
     console.error('❌ 未找到有效 paa/config.json（需要 apiUrl + apiKey）');
     process.exit(1);
   }
 
   // ---- LAN 访问（手机端）：lan.json lan:true → 绑 0.0.0.0 + /api 与 /ws 门禁 ----
-  const lanCfg = await loadLanConfig();
+  const lanCfg = DEMO ? { lan: false, accessToken: '' } : await loadLanConfig();
   if (lanCfg.lan) HOST = '0.0.0.0';
 
   // ---- S1：Supabase Auth（GitHub OAuth，PKCE）----
-  const supabaseConfig = await loadSupabaseConfig();
+  const supabaseConfig = DEMO ? null : await loadSupabaseConfig();
   const auth = supabaseConfig
     ? new SupabaseAuth({
         projectUrl: supabaseConfig.url,
         publishableKey: supabaseConfig.publishableKey,
         callbackUrl: `http://${HOST}:${PORT}/api/auth/callback`,
-        sessionDir: path.join(PAA_ROOT, 'data', 'auth', 'sessions'),
-        userDir: path.join(PAA_ROOT, 'data', 'auth', 'users'),
+        sessionDir: path.join(DATA_ROOT, 'data', 'auth', 'sessions'),
+        userDir: path.join(DATA_ROOT, 'data', 'auth', 'users'),
       })
     : null;
   await auth?.init();
 
   // 数据层
-  const lifeStore = new LifeStore(path.join(PAA_ROOT, 'data', 'life'));
+  const lifeStore = new LifeStore(path.join(DATA_ROOT, 'data', 'life'));
   await lifeStore.init();
+  if (DEMO) await seedDemoData(lifeStore);
 
   // ---- S2：云同步状态（登录后按用户启用；本地为 source of truth，云端镜像）----
   let syncState: SyncState | null = null;
@@ -457,7 +506,7 @@ async function main(): Promise<void> {
       ensureRealtime(); // 引擎可复用，但 Realtime 可能还没起（如 server 重启后第一次 me）
       return;
     }
-    const state = new SyncState(path.join(PAA_ROOT, 'data', 'sync'));
+    const state = new SyncState(path.join(DATA_ROOT, 'data', 'sync'));
     await state.init();
     const transport = new SupabaseSyncTransport({
       projectUrl: supabaseConfig.url,
@@ -483,18 +532,18 @@ async function main(): Promise<void> {
   }
 
   // 对话会话 store（data/sessions/*，启动加载 + 原子写持久化 + 损坏自愈）
-  chatStore = new ChatSessionStore(path.join(PAA_ROOT, 'data', 'sessions'));
+  chatStore = new ChatSessionStore(path.join(DATA_ROOT, 'data', 'sessions'));
   await chatStore.init();
 
   // 大脑层
   const memory = new JsonMemoryProvider({
-    filePath: path.join(PAA_ROOT, 'memory', 'store.json'),
+    filePath: path.join(DATA_ROOT, 'memory', 'store.json'),
     seed: createDefaultPersonaSeed(),
   });
   await memory.init();
-  const artifacts = new FileArtifactProvider(path.join(PAA_ROOT, 'artifacts'));
+  const artifacts = new FileArtifactProvider(path.join(DATA_ROOT, 'artifacts'));
 
-  const session = new SessionMgr(path.join(PAA_ROOT, 'runs'));
+  const session = new SessionMgr(path.join(DATA_ROOT, 'runs'));
   const serverSessionId = await session.newSession();
 
   const audit = (line: string): void => {
@@ -503,7 +552,8 @@ async function main(): Promise<void> {
   };
   const permission = new Permission(2); // 默认 L2：读自动，写确认（控制台可视调节）
   const pipeline = new ToolPipeline(permission);
-  for (const t of createCoreTools(WORKSPACE_ROOT)) pipeline.register(t);
+  isTrustable = (tool) => (pipeline.get(tool)?.risk ?? 4) < 4;
+  for (const t of createCoreTools(AGENT_ROOT)) pipeline.register(t);
   for (const t of createMemoryTools(memory)) pipeline.register(t);
   for (const t of createArtifactTools(artifacts)) pipeline.register(t);
   for (const t of createWebTools()) pipeline.register(t);
@@ -514,7 +564,7 @@ async function main(): Promise<void> {
     pipeline,
     permission,
     env: {
-      root: WORKSPACE_ROOT,
+      root: AGENT_ROOT,
       pkgDir: path.join(PAA_ROOT, 'pkgs'),
       audit,
       services: { lifeStore },
@@ -527,7 +577,7 @@ async function main(): Promise<void> {
     console.error(`工具包 ${name} 加载失败: ${why}`);
   }
 
-  const adapter = createAdapter(llmConfig);
+  const adapter = DEMO || !llmConfig ? new DemoAdapter() : createAdapter(llmConfig);
   const toolsDesc = pipeline
     .list()
     .map((t) => `- ${t.name}：${t.desc}（risk ${t.risk}）`)
@@ -561,13 +611,23 @@ async function main(): Promise<void> {
   const httpServer = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', `http://${HOST}:${PORT}`);
     const p = url.pathname;
-    console.log(`[http] ${req.method} ${p}${url.search ? '?' + url.search.slice(0, 80) : ''}`);
+    console.log(`[http] ${req.method} ${p}${url.search ? redactSearch(url.search).slice(0, 80) : ''}`);
 
     try {
+      // ---- 来源门禁：拒绝跨站网页 / DNS rebinding 发来的 API 请求（见 request-guard.ts）----
+      if (p.startsWith('/api/')) {
+        const rejected = checkRequestSource(req.headers, lanCfg.lan);
+        if (rejected) {
+          console.warn(`[http] 拒绝 ${req.method} ${p}: ${rejected}`);
+          sendJson(res, 403, { error: 'forbidden origin' });
+          return;
+        }
+      }
+
       // ---- LAN 门禁：配置了 accessToken 时，/api/*（除 /api/auth/*）必须带 token（header 或 ?token=）----
       if (lanCfg.accessToken && p.startsWith('/api/') && !p.startsWith('/api/auth/')) {
         const tok = req.headers['x-access-token'] ?? url.searchParams.get('token') ?? '';
-        if (tok !== lanCfg.accessToken) {
+        if (!tokenMatches(tok, lanCfg.accessToken)) {
           sendJson(res, 403, { error: 'access denied' });
           return;
         }
@@ -577,6 +637,7 @@ async function main(): Promise<void> {
       if (p === '/api/health' && req.method === 'GET') {
         sendJson(res, 200, {
           ok: true,
+          demo: DEMO,
           port: PORT,
           level: permission.level,
           tools: pipeline.list().map((t) => ({ name: t.name, risk: t.risk })),
@@ -870,17 +931,18 @@ async function main(): Promise<void> {
         }
         const ctx = {
           sessionId: serverSessionId,
-          cwd: WORKSPACE_ROOT,
+          cwd: AGENT_ROOT,
           ask: askOverWs,
           audit,
         };
         const runP = chatQueue.then(async () => {
+          const prior = rec.messages.slice(-MAX_HISTORY);
           const result = await loop.run(message, ctx, {
-            prior: rec.messages.slice(-MAX_HISTORY),
+            prior,
             onEvent: (ev) => broadcast({ type: 'event', ev }),
           });
-          const uiHistory = messagesToUiHistory(result.messages ?? []);
-          const updated = await chatStore.append(sid, result.messages ?? [], uiHistory);
+          const fresh = turnMessages(result.messages ?? [], prior, message);
+          const updated = await chatStore.append(sid, fresh, messagesToUiHistory(fresh));
           return {
             ok: true,
             sessionId: sid,
@@ -910,20 +972,21 @@ async function main(): Promise<void> {
         const chatSession = await getChatSession(body.sessionId);
         const ctx = {
           sessionId: serverSessionId,
-          cwd: WORKSPACE_ROOT,
+          cwd: AGENT_ROOT,
           ask: askOverWs,
           audit,
         };
         // 串行执行（同一 loop 不可并发）
         const runP = chatQueue.then(async () => {
+          const prior = chatSession.messages.slice(-MAX_HISTORY);
           const result = await loop.run(message, ctx, {
-            prior: chatSession.messages.slice(-MAX_HISTORY),
+            prior,
             onEvent: (ev) => broadcast({ type: 'event', ev }),
           });
-          // 更新会话历史（去 system 的完整轨迹）→ 持久化到 store
-          const uiHistory = messagesToUiHistory(result.messages ?? []);
-          await chatStore.append(chatSession.id, result.messages ?? [], uiHistory);
-          chatSession.messages = (chatSession.messages ?? []).concat(result.messages ?? []).slice(-MAX_HISTORY);
+          // 只持久化本轮新增（去 system）；result.messages 含 prior，整段 append 会翻倍
+          const fresh = turnMessages(result.messages ?? [], prior, message);
+          await chatStore.append(chatSession.id, fresh, messagesToUiHistory(fresh));
+          chatSession.messages = (chatSession.messages ?? []).concat(fresh).slice(-MAX_HISTORY);
           return {
             ok: true,
             sessionId: chatSession.id,
@@ -952,7 +1015,7 @@ async function main(): Promise<void> {
         const chatSession = await getChatSession(body.sessionId);
         const ctx = {
           sessionId: serverSessionId,
-          cwd: WORKSPACE_ROOT,
+          cwd: AGENT_ROOT,
           ask: askOverWs,
           audit,
         };
@@ -979,8 +1042,9 @@ async function main(): Promise<void> {
         });
 
         const runP = chatQueue.then(async () => {
+          const prior = chatSession.messages.slice(-MAX_HISTORY);
           const result = await loop.run(message, ctx, {
-            prior: chatSession.messages.slice(-MAX_HISTORY),
+            prior,
             onDelta: (text) => {
               if (!closed) sse({ type: 'delta', text });
             },
@@ -989,7 +1053,10 @@ async function main(): Promise<void> {
               broadcast({ type: 'event', ev });
             },
           });
-          chatSession.messages = (chatSession.messages ?? []).concat(result.messages ?? []).slice(-MAX_HISTORY);
+          // 与 /api/chat 一致：落盘本轮轨迹（此前 console 的流式对话从不保存，刷新/切会话即丢失）
+          const fresh = turnMessages(result.messages ?? [], prior, message);
+          await chatStore.append(chatSession.id, fresh, messagesToUiHistory(fresh));
+          chatSession.messages = (chatSession.messages ?? []).concat(fresh).slice(-MAX_HISTORY);
           return result;
         });
         chatQueue = runP.catch(() => undefined);
@@ -1005,6 +1072,18 @@ async function main(): Promise<void> {
             res.end();
           }
         }
+        return;
+      }
+
+      // ---- REST：确认卡应答（console.html 的"允许/拒绝/总是允许"按钮走这里）----
+      if (p === '/api/confirm' && req.method === 'POST') {
+        const body = JSON.parse((await readBody(req)).toString('utf8')) as { id?: unknown; ok?: unknown; always?: unknown };
+        if (typeof body.id !== 'string') {
+          sendJson(res, 400, { error: 'id 必填' });
+          return;
+        }
+        const found = answerConfirm(body.id, body.ok === true, body.always === true);
+        sendJson(res, found ? 200 : 404, found ? { ok: true } : { error: '确认已超时或不存在' });
         return;
       }
 
@@ -1040,8 +1119,15 @@ async function main(): Promise<void> {
       socket.destroy();
       return;
     }
+    // 来源门禁：WebSocket 不受同源策略保护，任意网页都能连——必须校验 Origin（跨站 WS 劫持）
+    const rejected = checkRequestSource(req.headers, lanCfg.lan);
+    if (rejected) {
+      console.warn(`[ws] 拒绝连接: ${rejected}`);
+      socket.destroy();
+      return;
+    }
     // LAN 门禁：配置了 accessToken 时，/ws 必须带 ?token=（WebSocket 握手无法自定义 header）
-    if (lanCfg.accessToken && wsUrl.searchParams.get('token') !== lanCfg.accessToken) {
+    if (lanCfg.accessToken && !tokenMatches(wsUrl.searchParams.get('token'), lanCfg.accessToken)) {
       socket.destroy();
       return;
     }
@@ -1059,6 +1145,8 @@ async function main(): Promise<void> {
       type: 'welcome',
       sessionId: serverSessionId,
       tools: pipeline.list().map((t) => t.name),
+      risks: Object.fromEntries(pipeline.list().map((t) => [t.name, t.risk])),
+      demo: DEMO,
       pkgs: loadedPkgs.map((lp) => lp.manifest.name),
     });
     console.log(`[ws] 控制台已连接（${connections.size} 个）`);
@@ -1081,6 +1169,7 @@ async function main(): Promise<void> {
     console.log('│  PAA Console Server                          │');
   console.log(`│  入口     http://${HOST}:${PORT}/            │`);
     console.log(`│  Autonomy L2（risk3 写操作推确认卡）          │`);
+    if (DEMO) console.log(`│  演示模式：脚本化回复，数据在 ${DATA_ROOT}`);
     console.log(`│  工具 ${pipeline.list().length} 个 · 包 ${loadedPkgs.map((l) => l.manifest.name).join(',') || '无'}              `);
     console.log('╰──────────────────────────────────────────────╯');
   });

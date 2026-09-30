@@ -2,7 +2,8 @@
 # 用途：开机自启（计划任务 ONLOGON）+ 崩溃看门狗（计划任务每 5 分钟）
 $ErrorActionPreference = 'Stop'
 
-$root = 'C:\Users\selin\WorkBuddy\20260812100418'
+# 仓库根 = 本脚本所在 tools/ 的上一级（不再写死本机路径，换电脑/换目录也能用）
+$root = Split-Path -Parent $PSScriptRoot
 $port = 8765
 
 # 已在跑 → 无事发生

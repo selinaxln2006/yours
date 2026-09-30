@@ -139,9 +139,10 @@ export class PkgLoader {
 
   /** manifest 结构校验（失败即抛；字段级严格，防注入半吊子包） */
   private validateManifest(m: unknown, dirName: string): void {
-    const fail = (why: string): never => {
+    // 函数声明（而非箭头函数常量）才能让 TS 在 fail() 后收窄类型
+    function fail(why: string): never {
       throw new Error(`包 ${dirName} manifest 校验失败: ${why}`);
-    };
+    }
     if (typeof m !== 'object' || m === null) fail('不是对象');
     const mm = m as Record<string, unknown>;
     if (typeof mm.name !== 'string' || !PKG_NAME_RE.test(mm.name)) fail(`name 非法（需 ^[a-z][a-z0-9_]*$）: ${String(mm.name)}`);

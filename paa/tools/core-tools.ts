@@ -8,6 +8,7 @@ import { readFile, writeFile, appendFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { TextDecoder } from 'node:util';
 import type { ExecContext, ToolDefinition } from '../core/types.ts';
+import { resolveInside } from '../core/path-guard.ts';
 
 /** ENOENT 时给出同目录候选，避免 agent 反复 fs_list 猜路径 */
 async function missingHint(absRoot: string, rel: string, file: string): Promise<string> {
@@ -34,13 +35,8 @@ const SHELL_BLACKLIST = [
 export function createCoreTools(root: string): ToolDefinition[] {
   const absRoot = path.resolve(root);
 
-  const resolve = (rel: string): string => {
-    const abs = path.resolve(absRoot, rel);
-    if (abs !== absRoot && !abs.startsWith(absRoot + path.sep)) {
-      throw new Error(`路径超出沙箱: ${rel}`);
-    }
-    return abs;
-  };
+  // 字符串越界 + 符号链接越界双重校验（见 core/path-guard.ts）
+  const resolve = (rel: string): string => resolveInside(absRoot, rel);
 
   return [
     {
@@ -213,7 +209,7 @@ export function createCoreTools(root: string): ToolDefinition[] {
           const entries = await readdir(dir, { withFileTypes: true });
           for (const e of entries) {
             if (matches.length >= max) break;
-            if (IGNORE.has(e.name)) continue;
+            if (IGNORE.has(e.name) || e.isSymbolicLink()) continue; // 不跟随符号链接（可能指向沙箱外）
             const full = path.join(dir, e.name);
             if (e.isDirectory()) await searchDir(full);
             else if (/\.(ts|js|json|md|html|css|cjs|mjs)$/.test(e.name)) await searchFile(full);
