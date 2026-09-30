@@ -50,7 +50,7 @@ let DATA_ROOT = PAA_ROOT;
 /** agent 文件/命令工具的沙箱根；演示模式下是临时目录里的 workspace，不碰仓库 */
 let AGENT_ROOT = WORKSPACE_ROOT;
 
-// ---- 参数：--port N / PAA_PORT（默认 8765 = 旧 serve.cjs 同源端口） ----
+// ---- 参数：--port N / PAA_PORT（默认 8765） ----
 function resolvePort(): number {
   const argv = process.argv;
   for (let i = 0; i < argv.length; i++) {
@@ -326,9 +326,7 @@ function sanitize(key: string, value: unknown): unknown {
 function isPublicAsset(rel: string): boolean {
   return (
     rel === 'console.html' ||
-    rel === 'manifest.json' ||
     rel === 'manifest.webmanifest' ||
-    rel === 'sw.js' ||
     /^icons\/[a-z0-9-]+\.png$/.test(rel)
   );
 }
