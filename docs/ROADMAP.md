@@ -406,6 +406,38 @@ console v1.3   主客反转：chat 主区 + 8 面板附属，全部真写回   5
 - **Phase D2 · iOS 壳**（D1 后）：Capacitor 包 console WebView 成 iOS app（App Store 分发或 TestFlight）；手机访问本地 agent 走局域网/隧道
 - **Phase D3 · 多用户**：本地单实例多 profile（每用户独立数据/记忆/会话），与 S 线云端身份打通（登录 = 选 profile）
 
+### 形态演进路线（2026-09-04 俪宁明确「做到手机 App」补充）
+
+> 俪宁 2026-09-04 后半段明确反馈：**"我需要一个可以电脑离线使用的手机端 PAA。"** 这是核心需求——之前 §九 把 M7 云大脑列为"可选 / 不做"是误判（"出门在外也能用"和"电脑离线时手机能用"是同一件事的两面）。
+>
+> **路径重定位**：
+> - **M7 Azure VM 部署**（Codex 共享 VM）：🔥 **核心路径**，等 Codex 配好 Azure VM → WorkBuddy 接管部署脚本。**手机断网可用 = 唯一 KPI**。详 `docs/M7-cloud-brain-selection.md`。
+> - **M6 壳 App**（Capacitor / Tauri）：降级为优化项，PWA 已覆盖 90% 体验，App 形态可后置。**前置条件加上"前端需打磨"**（mobile.html 是骨架，UI/UX 仍是糙版，需要重新设计）。
+> - **M8 真正 App + 云大脑**：终态不变（M6 + M7 联动）。
+>
+> "数据主权在本地"原则与 M7 不冲突：S2/S3 已实现"云端是可选同步"，云大脑 = VPS 上跑 agent + 数据按需双向，**不强制上云**。
+
+| # | 中间形态 | 状态 | 备注 |
+|---|--------|------|------|
+| M1 | **手机访问通道**（Tailscale + LAN 模式 + 防火墙入站） | ✅ 已落地 | 2026-08-31 + 2026-09-04：电脑侧 4 项验证全过（listen/firewall/service/Tailscale），手机端要求**同账号**登录 Tailscale |
+| M2 | **LAN 令牌 cookie 化**（7 天免输） | ✅ 已落地（2026-09-04） | `POST /api/lan/token` 写 `paa_lan_token` HttpOnly cookie；/api/* + /ws 都接受 cookie 门禁 |
+| M3 | **手机端 UI 骨架**（mobile.html） | ✅ 已落地（2026-09-04） | 三 Tab：对话 / 任务 / 日程；移动优先（safe-area-inset / 触控）；复用 console 同套 API |
+| M4 | **PWA 加主屏**（iOS Safari 分享、Android Chrome 安装） | ✅ 已落地 | 现有 `manifest.webmanifest` + `apple-mobile-web-app-capable` 满足；引导文档 `docs/PWA-INSTALL.md` |
+| M5 | **域名短化**（MagicDNS） | ✅ 已落地 | `<设备名>.<tailnet>.ts.net:18765`（Tailscale MagicDNS），电脑端 curl 200 |
+| M6 | **壳 App**（Capacitor / Tauri 打 iOS/Android / macOS 包） | ⏳ 待启动 | D2 一部分；前置：mobile.html 稳定 **+ 前端打磨** + G8 通过；时间估算 1-2 周；PWA 已覆盖 90% 体验，**App 形态可后置**（降级为优化项） |
+| M7 | **Azure VM 部署**（Codex 共享 VM） | 🔥 **核心路径** | 复用 Codex 的 Azure VM，WorkBuddy 接管部署脚本；月费 ~$10（分摊 ~$5）；详 `docs/M7-cloud-brain-selection.md` |
+| M8 | **真正 App + 云大脑**（终态） | ⏳ 远期 | M6 + M7 联动 = "人人可用"终态；个人用户装壳 App、agent 大脑跑在你云上 |
+
+### 形态决策表（俪宁可勾选）
+
+| 决策 | 选项 | 我的建议 |
+|------|------|---------|
+| **手机 UI 用哪个** | A. mobile.html（已落地）  B. console.html 响应式改造  C. 都不做，用桌面 | **A**——mobile.html 已是独立工程，console.html 重构代价大 |
+| **壳 App 何时启动** | A. G8 通过后立刻（1-2 周）  B. 等 G8 + D3 多用户一起做  C. 不做，停在 PWA | **B**——多用户做完后壳 App 一次到位，避免返工 |
+| **云大脑何时启动** | A. G8 通过后立刻  B. 长期项目（独立规划）  C. 不做 | **A**——"电脑离线时手机能用"的唯一正解，G8 收口立刻启动 |
+| **前端何时打磨**（mobile.html / console.html UI 重做） | A. G8 同时  B. G8 后立刻  C. 不做 | **B**——G8 收口后第一件事；当前前端糙版能用但不好看 |
+| **"数据主权"原则** | A. 严格（云大脑永远不上线）  B. 可选（用户可选云端同步）  C. 妥协（云为主、本地为辅） | **B**——S2/S3 已经实现了"云端是可选同步"，与 A 兼容 |
+
 > 注意：① 多端同步（S 线 §六）与"多用户"是两件事——S 线是**同一个人**多设备同步；D3 是**不同人**在同一台/不同机器上各自独立使用。② 本地 agent 的产品哲学 = 数据主权在用户（OpenClaw 同款），云端只做可选的同步与身份，永远不是必要依赖。
 
 ---
