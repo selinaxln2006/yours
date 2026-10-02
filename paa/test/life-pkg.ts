@@ -63,10 +63,15 @@ async function call(h: Harness, tool: string, args: Record<string, unknown>, aut
   return h.pipeline.run({ id: `c-${Math.random().toString(36).slice(2, 8)}`, name: `life_${tool}`, arguments: args }, ctxOf(h, autoApprove));
 }
 
-test('life 包真加载：13 工具注册为 life_*，query_summary 为 risk1 读工具', async () => {
+test('life 包真加载：14 工具注册为 life_*，query_summary 为 risk1 读工具', async () => {
   const h = await makeHarness();
   const names = h.pipeline.list().map((t) => t.name).filter((n) => n.startsWith('life_'));
-  assert.equal(names.length, 13);
+  assert.equal(names.length, 14);
+  assert.equal(h.pipeline.get('life_suggest_plan')?.risk, 2, '建议计划不产生外部影响：L2 免确认');
+  // manifest 没写 required 的参数是可选的
+  const todo = h.pipeline.get('life_add_todo');
+  assert.equal(todo?.params.title.required, true);
+  assert.equal(todo?.params.priority.required, false);
   assert.equal(h.pipeline.get('life_query_summary')?.risk, 1);
   assert.equal(h.pipeline.get('life_create_goal')?.risk, 3);
   assert.equal(h.pipeline.get('life_add_weight')?.risk, 3);
@@ -172,4 +177,41 @@ test('L2 下 risk3 写工具触发 ask（权限门照常生效）', async () => 
   assert.equal(asked, 1, 'risk3 在 L2 应触发确认');
   assert.equal(r.ok, false, '用户拒绝后工具应失败');
   assert.equal((h.store.get('water') as unknown[]).length, 0, '数据不应被写入');
+});
+
+test('suggest_plan：写入「建议」待办；同一目标重拆替换未承诺的旧建议，已承诺的保留', async () => {
+  const h = await makeHarness();
+  const today = new Date();
+  const ymd = (d: Date): string => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+  const r1 = await call(h, 'suggest_plan', { goalId: 'g1', items: [
+    { title: '刷 2 道概率题', dueDate: ymd(today), priority: 'high' },
+    { title: '整理错题', dueDate: ymd(tomorrow) },
+    { title: '   ' },
+    { title: '过去的日期挪到今天', dueDate: '2000-01-01' },
+  ] });
+  assert.equal(r1.ok, true);
+  let todos = h.store.get('todos') as Array<Record<string, unknown>>;
+  assert.equal(todos.length, 3, '空标题跳过');
+  assert.ok(todos.every((x) => x.plan === 'suggested' && x.goalId === 'g1' && x.done === false));
+  assert.equal(todos.find((x) => x.title === '过去的日期挪到今天')?.dueDate, ymd(today));
+  // 用户把第一条点成「今天做」
+  todos[0].plan = 'committed';
+  await h.store.tx((d) => { (d as Record<string, unknown>).todos = todos; }, { source: 'ui' });
+  const r2 = await call(h, 'suggest_plan', { goalId: 'g1', items: [{ title: '新建议', dueDate: ymd(tomorrow) }] });
+  assert.equal(r2.ok, true);
+  assert.equal((r2.data as { replaced: number }).replaced, 2);
+  todos = h.store.get('todos') as Array<Record<string, unknown>>;
+  assert.deepEqual(todos.map((x) => [x.title, x.plan]), [['刷 2 道概率题', 'committed'], ['新建议', 'suggested']]);
+  await assert.ok((await call(h, 'suggest_plan', { items: [] })).ok === false);
+});
+
+test('query_summary：承诺和建议分开统计', async () => {
+  const h = await makeHarness();
+  await call(h, 'add_todo', { title: '交作业', atHome: true });
+  await call(h, 'suggest_plan', { items: [{ title: '参考：看书', dueDate: '2999-01-01' }] });
+  const s = JSON.parse((await call(h, 'query_summary', {})).data as string);
+  assert.equal(s.pendingTodoCount, 1);
+  assert.equal(s.pendingTodos[0].atHome, true);
+  assert.equal(s.suggestedTodos.length, 1);
 });

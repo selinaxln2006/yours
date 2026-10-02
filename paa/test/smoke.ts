@@ -67,7 +67,7 @@ async function main() {
     ctx,
   );
   assert.equal(shell.ok, false, '黑名单命令必须拒绝');
-  assert.match(shell.error ?? '', /黑名单/);
+  assert.match(shell.error ?? '', /拒绝/);
 
   // 6. 沙箱越界 → 拒绝
   const escape = await pipeline.run(

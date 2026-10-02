@@ -50,3 +50,12 @@ test('适配器：先发工具调用，工具结果回来后总结；没识别�
   const m4 = await a.chat([{ role: 'user', content: '喝了 300ml 水' }], { tools: [] });
   assert.equal(m4.toolCalls, undefined);
 });
+
+test('拆解目标：一次给出 5 天的建议计划，带目标 id，日期从今天起', () => {
+  const r = parseIntents('帮我把目标「准备量化面试」（id: demo-g2）拆成这周每天的参考计划', new Date(2026, 9, 2, 20, 0));
+  assert.equal(r.length, 1);
+  assert.equal(r[0].call.name, 'life_suggest_plan');
+  const a = r[0].call.arguments as { goalId: string; items: Array<{ dueDate: string }> };
+  assert.equal(a.goalId, 'demo-g2');
+  assert.deepEqual(a.items.map((x) => x.dueDate), ['2026-10-02', '2026-10-03', '2026-10-04', '2026-10-05', '2026-10-06']);
+});

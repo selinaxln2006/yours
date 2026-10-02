@@ -30,7 +30,7 @@
 ## PAA 部署到 VM 后的形态
 
 ```
-手机 PWA  ── HTTPS ──▶  Azure VM (Caddy :443)  ──▶  PAA server (Node :8765)
+手机 PWA  ── HTTPS ──▶  Azure VM (Caddy :443)  ──▶  PAA server (Node :18765)
                                               │
                                               ├── Tailscale  ◀── 家里电脑（拉取任务 / 同步数据）
                                               ├── S2/S3 双向同步（Supabase 兜底）

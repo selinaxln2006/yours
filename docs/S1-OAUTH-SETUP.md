@@ -13,7 +13,7 @@
    | 字段 | 填什么 |
    |------|--------|
    | Application name | `PAA Console`（随意） |
-   | Homepage URL | `http://127.0.0.1:8765` |
+   | Homepage URL | `http://127.0.0.1:18765` |
    | Authorization callback URL | **`https://rgrgnhkiodnsthtbdxch.supabase.co/auth/v1/callback`** |
 3. 创建后拿到 **Client ID** + 点 **Generate a new client secret** 拿 **Client Secret**（只显示一次，先复制好）
 
@@ -29,8 +29,8 @@
    - **Client Secret** ← 上一步的 Client Secret
    - Save
 3. **Authentication → URL Configuration**：
-   - **Site URL**: `http://127.0.0.1:8765`
-   - **Redirect URLs** 添加：`http://127.0.0.1:8765/api/auth/callback`
+   - **Site URL**: `http://127.0.0.1:18765`
+   - **Redirect URLs** 添加：`http://127.0.0.1:18765/api/auth/callback`
    - Save
 
 ---
@@ -49,6 +49,6 @@
 
 | 现象 | 原因 |
 |------|------|
-| 登录后跳回 Supabase 报 `redirect_to` 不允许 | Redirect URLs 没加 `http://127.0.0.1:8765/api/auth/callback` |
+| 登录后跳回 Supabase 报 `redirect_to` 不允许 | Redirect URLs 没加 `http://127.0.0.1:18765/api/auth/callback` |
 | GitHub 报 redirect_uri mismatch | ① 步的 callback URL 抄错了（必须是 supabase.co/auth/v1/callback） |
 | 登录按钮点了没反应 | server 还没起 / 端口不是 8765 |

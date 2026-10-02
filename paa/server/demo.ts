@@ -11,8 +11,8 @@ import type { LifeStore } from '../core/life-store.ts';
 
 const ymd = (d: Date): string =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-const dayOffset = (n: number): string => {
-  const d = new Date();
+const dayOffset = (n: number, base: Date = new Date()): string => {
+  const d = new Date(base);
   d.setDate(d.getDate() + n);
   return ymd(d);
 };
@@ -34,6 +34,21 @@ interface Intent {
 export function parseIntents(text: string, now = new Date()): Intent[] {
   const out: Intent[] = [];
   const t = text.replace(/\s+/g, ' ');
+
+  // 拆解目标："帮我把目标「X」（id: g1）拆成这周每天的参考计划"
+  if (/拆/.test(t) && /目标|计划/.test(t)) {
+    const title = /「([^」]+)」/.exec(t)?.[1] ?? '这个目标';
+    const goalId = /id[:：]\s*([\w-]+)/.exec(t)?.[1];
+    const steps = [
+      `列出「${title.slice(0, 12)}」需要的 3 块能力，各写一句现状`,
+      '第一块：找 1 份好材料，读 30 分钟并记 3 个要点',
+      '第一块：做 2 道练习，错的写下原因',
+      '第二块：同样 30 分钟材料 + 2 道练习',
+      '回顾这周：哪块最薄弱，定下周重点',
+    ];
+    const items = steps.map((s, i) => ({ title: s, dueDate: dayOffset(i, now), priority: i === 0 ? 'high' : 'mid' }));
+    return [{ call: { name: 'life_suggest_plan', arguments: { ...(goalId ? { goalId } : {}), items } }, say: `把「${title}」拆成未来 5 天的参考计划（每天一件，先当建议放着，你在「今天」里挑）` }];
+  }
 
   // 饮食："午饭吃了 A 和 B" / "早上吃了燕麦 300 卡"
   const eat = /(早餐|早饭|早上|午餐|午饭|中午|晚餐|晚饭|晚上|夜宵|加餐|零食)?[^，。,.]*?吃了([^，。,.；;]+)/.exec(t);
@@ -62,7 +77,7 @@ export function parseIntents(text: string, now = new Date()): Intent[] {
   // 睡眠："睡了 7.5 小时"
   const sl = /睡了?\s*(\d+(?:\.\d+)?)\s*(个)?(小时|h)/i.exec(t);
   if (sl) {
-    const date = /昨/.test(t) ? dayOffset(-1) : ymd(now);
+    const date = /昨/.test(t) ? dayOffset(-1, now) : ymd(now);
     out.push({ call: { name: 'life_add_sleep', arguments: { hours: Number(sl[1]), date } }, say: `睡眠 ${sl[1]} 小时` });
   }
 
@@ -81,7 +96,7 @@ export function parseIntents(text: string, now = new Date()): Intent[] {
     let h = Number(tm[3]);
     if (/下午|晚上/.test(tm[2] ?? '') && h < 12) h += 12;
     const m = tm[4]?.includes('半') ? '30' : (tm[5] ?? '00');
-    const date = tm[1] === '明天' ? dayOffset(1) : tm[1] === '后天' ? dayOffset(2) : ymd(now);
+    const date = tm[1] === '明天' ? dayOffset(1, now) : tm[1] === '后天' ? dayOffset(2, now) : ymd(now);
     const title = t.slice(tm.index + tm[0].length).replace(/^[\s,，的]*(想|要|去|开|有)?/, '').replace(/[，。,.!！]+.*$/, '').trim().slice(0, 20) || '日程';
     out.push({ call: { name: 'life_add_schedule', arguments: { title, date, startTime: `${String(h).padStart(2, '0')}:${m}` } }, say: `日程「${title}」${date.slice(5)} ${String(h).padStart(2, '0')}:${m}` });
   }
@@ -146,7 +161,10 @@ export class DemoAdapter implements LLMAdapter {
     if (results.length) {
       const failed = results.filter((m) => /"ok"\s*:\s*false/.test(m.content ?? ''));
       const done = results.length - failed.length;
-      const lines = [done ? `记好了 ✅ 共 ${done} 项，「今天」已经更新。` : '这次什么都没记下。'];
+      const planned = turn.some((m) => (m.toolCalls ?? []).some((c) => c.name === 'life_suggest_plan'));
+      const lines = [planned && done
+        ? '放好了：未来 5 天每天一件，都标成「建议」。打开「今天」，把今天想做的点「今天做」——只有你点过的才会提醒。'
+        : done ? `记好了 ✅ 共 ${done} 项，「今天」已经更新。` : '这次什么都没记下。'];
       if (failed.length) lines.push(`有 ${failed.length} 项没执行（被拒绝或失败），需要的话换个说法再试。`);
       return { role: 'assistant', content: lines.join('\n') };
     }
@@ -184,11 +202,17 @@ export async function seedDemoData(store: LifeStore): Promise<void> {
       { id: 'demo-s4', title: '期中考试', date: d(3), startTime: '09:00', category: 'study', rrule: 'none' },
     ];
     w.todos = [
-      { id: 'demo-d1', title: '复习随机过程第 4 章', priority: 'high', done: false },
-      { id: 'demo-d2', title: '投实习简历', priority: 'mid', done: false },
-      { id: 'demo-d3', title: '买网球', priority: 'low', done: false },
-      { id: 'demo-d4', title: '交作业 3', priority: 'mid', done: true },
+      { id: 'demo-d1', title: '复习随机过程第 4 章', priority: 'high', done: false, dueDate: d(0), atHome: true },
+      { id: 'demo-d2', title: '投实习简历', priority: 'mid', done: false, dueDate: d(-1) },
+      { id: 'demo-d3', title: '买网球', priority: 'low', done: false, dueDate: d(2) },
+      { id: 'demo-d4', title: '交作业 3', priority: 'mid', done: true, dueDate: d(-1) },
+      { id: 'demo-p1', title: '刷 2 道概率面试题（条件期望）', priority: 'high', done: false, dueDate: d(0), plan: 'suggested', goalId: 'demo-g2' },
+      { id: 'demo-p2', title: '读 30 分钟 Heard on the Street 第 2 章', priority: 'mid', done: false, dueDate: d(0), plan: 'suggested', goalId: 'demo-g2' },
+      { id: 'demo-p3', title: '用 Python 实现一次蒙特卡洛定价', priority: 'mid', done: false, dueDate: d(1), plan: 'suggested', goalId: 'demo-g2' },
     ];
-    w.goals = [{ id: 'demo-g1', title: '期末前体重到 55kg', type: 'weight', target: 55, startValue: 57.4, endDate: d(60), createdAt: Date.now(), milestones: [] }];
+    w.goals = [
+      { id: 'demo-g2', title: '学期末前准备好量化实习面试', type: 'custom', target: 1, unit: '', endDate: d(70), createdAt: Date.now(), status: 'active', milestones: [] },
+      { id: 'demo-g1', title: '期末前体重到 55kg', type: 'weight', target: 55, startValue: 57.4, endDate: d(60), createdAt: Date.now(), status: 'active', milestones: [] },
+    ];
   }, { source: 'demo' });
 }

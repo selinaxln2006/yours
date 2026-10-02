@@ -235,7 +235,8 @@ export class PkgLoader {
         const def: ToolDefinition = {
           name: full,
           desc: `${t.desc}（来自 pkg ${manifest.name}@${manifest.version}）`,
-          params: t.params,
+          // manifest 约定：没写 required 就是可选（内置 TS 工具的约定相反：没写 = 必填）
+          params: Object.fromEntries(Object.entries(t.params).map(([k, v]) => [k, { ...v, required: v.required === true }])),
           risk: t.risk,
           handler,
         };

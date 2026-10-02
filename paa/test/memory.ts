@@ -10,11 +10,22 @@ import {
 } from '../core/memory-provider.ts';
 import type { MemoryRecord } from '../core/types.ts';
 
+// 种子来自私有文件（paa/data/persona.json）；测试用一份中性的 6 条
+const SEED_FILE = path.join(mkdtempSync(path.join(tmpdir(), 'paa-seed-')), 'persona.json');
+writeFileSync(SEED_FILE, JSON.stringify([
+  { content: '用户：大学生，金融+数学', tags: ['persona', 'user'] },
+  { content: '沟通偏好：简体中文、结构化输出、直接', tags: ['persona', 'preference'] },
+  { content: '优先级：学业 > 实习申请 > 个人项目', tags: ['persona', 'priority'] },
+  { content: '职业方向：量化研究', tags: ['persona', 'career'] },
+  { content: '核心项目：个人 AI agent', tags: ['persona', 'project'] },
+  'PAA 技术路线：TS 自研大脑层',
+]), 'utf8');
+
 function makeProvider(): { p: JsonMemoryProvider; dir: string } {
   const dir = mkdtempSync(path.join(tmpdir(), 'paa-mem-'));
   const p = new JsonMemoryProvider({
     filePath: path.join(dir, 'store.json'),
-    seed: createDefaultPersonaSeed(),
+    seed: createDefaultPersonaSeed(SEED_FILE),
   });
   return { p, dir };
 }
@@ -36,7 +47,7 @@ test('save：默认 L1，可检索命中', async () => {
   const rec = await p.save({
     layer: 'L1',
     type: 'fact',
-    content: '俪宁减重目标 15 斤，截止 12 月',
+    content: '小林减重目标 15 斤，截止 12 月',
     tags: ['fitness', 'goal'],
     source: 'agent',
   });
@@ -52,14 +63,14 @@ test('自动失效：同 tag+type 内容不同的旧记录被 invalidAt', async 
   const a = await p.save({
     layer: 'L1',
     type: 'fact',
-    content: '俪宁在美团实习',
+    content: '小林在A 公司实习',
     tags: ['career', 'job'],
     source: 'agent',
   });
   const b = await p.save({
     layer: 'L1',
     type: 'fact',
-    content: '俪宁在腾讯实习',
+    content: '小林在B 公司实习',
     tags: ['career', 'job'],
     source: 'agent',
   });
@@ -67,9 +78,9 @@ test('自动失效：同 tag+type 内容不同的旧记录被 invalidAt', async 
   const old = all.find((r) => r.id === a.id);
   assert.ok(old && old.invalidAt, '旧记录应被自动失效');
 
-  const hit = await p.search('美团', 10);
+  const hit = await p.search('A 公司', 10);
   assert.ok(!hit.some((r) => r.id === a.id), '失效记录不应被检索到');
-  const hit2 = await p.search('腾讯', 10);
+  const hit2 = await p.search('B 公司', 10);
   assert.ok(hit2.some((r) => r.id === b.id), '新记录应可检索');
   assert.ok(!hit2.some((r) => r.id === a.id), '失效的旧记录不应被新词检索到');
 });
@@ -80,12 +91,12 @@ test('分层检索：L3 常驻 + L2 命中 + L1 补足 + L0 永不返回', async
   await p.save({
     layer: 'L0',
     type: 'episodic',
-    content: '原始对话全文……俪宁说她周三开会',
+    content: '原始对话全文……小林说她周三开会',
     tags: ['raw'],
     source: 'agent',
   });
   // L2 场景块
-  await p.consolidate('俪宁的健身体系：减重目标 + 每周三练 + 养生茶', {
+  await p.consolidate('小林的健身体系：减重目标 + 每周三练 + 养生茶', {
     layer: 'L2',
     type: 'fact',
     tags: ['fitness'],
@@ -95,7 +106,7 @@ test('分层检索：L3 常驻 + L2 命中 + L1 补足 + L0 永不返回', async
   await p.save({
     layer: 'L1',
     type: 'fact',
-    content: '俪宁周三上午有例会',
+    content: '小林周三上午有例会',
     tags: ['work', 'meeting'],
     source: 'agent',
   });
@@ -114,7 +125,7 @@ test('forget：软删后不再检索到', async () => {
   const rec = await p.save({
     layer: 'L1',
     type: 'fact',
-    content: '俪宁喜欢喝奶茶',
+    content: '小林喜欢喝奶茶',
     tags: ['food'],
     source: 'agent',
   });
@@ -130,7 +141,7 @@ test('consolidate：聚合 L2 并失效源记忆', async () => {
   const a = await p.save({ layer: 'L1', type: 'fact', content: '减重目标 15 斤', tags: ['fitness'], source: 'agent' });
   const b = await p.save({ layer: 'L1', type: 'fact', content: '每周三练', tags: ['fitness'], source: 'agent' });
 
-  const l2 = await p.consolidate('俪宁健身体系：减重 15 斤 + 每周三练', {
+  const l2 = await p.consolidate('小林健身体系：减重 15 斤 + 每周三练', {
     layer: 'L2',
     type: 'episodic',
     tags: ['fitness'],
@@ -177,7 +188,7 @@ test('损坏自愈：非法 JSON 备份后从种子重建', async () => {
   // 写坏文件
   writeFileSync(file, '{ broken json !!!', 'utf8');
 
-  const p2 = new JsonMemoryProvider({ filePath: file, seed: createDefaultPersonaSeed() });
+  const p2 = new JsonMemoryProvider({ filePath: file, seed: createDefaultPersonaSeed(SEED_FILE) });
   await p2.init();
   const all = await p2.list();
   assert.ok(all.length >= 6, '损坏后应从种子重建');
@@ -210,4 +221,12 @@ test('非法 layer/type 校验', async () => {
     p.save({ layer: 'L1', type: 'hack' as never, content: 'x', tags: [], source: 'agent' }),
     /非法类型/,
   );
+});
+
+test('画像种子文件不存在或格式不对 → 空种子', () => {
+  assert.deepEqual(createDefaultPersonaSeed(), []);
+  assert.deepEqual(createDefaultPersonaSeed(path.join(tmpdir(), 'no-such-persona.json')), []);
+  const bad = path.join(mkdtempSync(path.join(tmpdir(), 'paa-seed-')), 'p.json');
+  writeFileSync(bad, '{"not":"array"}', 'utf8');
+  assert.deepEqual(createDefaultPersonaSeed(bad), []);
 });

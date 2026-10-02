@@ -68,16 +68,16 @@ function genTodos(g) {
   const todos = [];
   const t = today();
   if (g.type === 'weight') {
-    todos.push({ id: uid(), title: '制定每周运动计划（4天/周）', priority: 'high', done: false, dueDate: addDays(t, 2), category: '健身' });
-    todos.push({ id: uid(), title: '每日记录饮食热量', priority: 'mid', done: false, dueDate: addDays(t, 1), category: '健身' });
-    todos.push({ id: uid(), title: '每周称重并记录', priority: 'mid', done: false, dueDate: addDays(t, 7), category: '健身' });
+    todos.push({ id: uid(), title: '制定每周运动计划（4天/周）', priority: 'high', done: false, plan: 'suggested', goalId: g.id, dueDate: addDays(t, 2), category: '健身' });
+    todos.push({ id: uid(), title: '每日记录饮食热量', priority: 'mid', done: false, plan: 'suggested', goalId: g.id, dueDate: addDays(t, 1), category: '健身' });
+    todos.push({ id: uid(), title: '每周称重并记录', priority: 'mid', done: false, plan: 'suggested', goalId: g.id, dueDate: addDays(t, 7), category: '健身' });
   } else if (g.type === 'saving') {
-    todos.push({ id: uid(), title: '制定月度预算计划', priority: 'high', done: false, dueDate: addDays(t, 3), category: '理财' });
-    todos.push({ id: uid(), title: '每周记账复盘', priority: 'mid', done: false, dueDate: addDays(t, 7), category: '理财' });
-    todos.push({ id: uid(), title: '设置自动转账到储蓄账户', priority: 'mid', done: false, dueDate: addDays(t, 5), category: '理财' });
+    todos.push({ id: uid(), title: '制定月度预算计划', priority: 'high', done: false, plan: 'suggested', goalId: g.id, dueDate: addDays(t, 3), category: '理财' });
+    todos.push({ id: uid(), title: '每周记账复盘', priority: 'mid', done: false, plan: 'suggested', goalId: g.id, dueDate: addDays(t, 7), category: '理财' });
+    todos.push({ id: uid(), title: '设置自动转账到储蓄账户', priority: 'mid', done: false, plan: 'suggested', goalId: g.id, dueDate: addDays(t, 5), category: '理财' });
   } else if (g.type === 'habit') {
-    todos.push({ id: uid(), title: '设置每日打卡提醒', priority: 'high', done: false, dueDate: addDays(t, 1), category: '习惯' });
-    todos.push({ id: uid(), title: '选择固定时间段执行', priority: 'mid', done: false, dueDate: addDays(t, 2), category: '习惯' });
+    todos.push({ id: uid(), title: '设置每日打卡提醒', priority: 'high', done: false, plan: 'suggested', goalId: g.id, dueDate: addDays(t, 1), category: '习惯' });
+    todos.push({ id: uid(), title: '选择固定时间段执行', priority: 'mid', done: false, plan: 'suggested', goalId: g.id, dueDate: addDays(t, 2), category: '习惯' });
   }
   return todos;
 }
@@ -110,9 +110,11 @@ export function createPkgTools(env) {
           todayExercise: d.exerciseLog.filter((e) => e.date === t).map((e) => ({ name: e.name, min: e.duration })),
           todayWaterMl: d.water.filter((w) => w.date === t).reduce((s, w) => s + w.amount, 0),
           lastSleep: d.sleep.find((s) => s.date === t) || null,
-          activeGoals: (d.goals || []).filter((g) => g.status !== 'done').map((g) => ({ title: g.title, type: g.type, target: g.target, unit: g.unit, endDate: g.endDate })),
-          pendingTodoCount: d.todos.filter((x) => !x.done).length,
-          pendingTodos: d.todos.filter((x) => !x.done).slice(0, 10).map((x) => ({ title: x.title, due: x.dueDate })),
+          activeGoals: (d.goals || []).filter((g) => g.status !== 'done').map((g) => ({ id: g.id, title: g.title, type: g.type, target: g.target, unit: g.unit, endDate: g.endDate })),
+          // 承诺 = 用户自己定下要做的；建议 = AI 拆出来的参考计划（不提醒、不算"没完成"）
+          pendingTodoCount: d.todos.filter((x) => !x.done && x.plan !== 'suggested').length,
+          pendingTodos: d.todos.filter((x) => !x.done && x.plan !== 'suggested').slice(0, 10).map((x) => ({ title: x.title, due: x.dueDate, atHome: !!x.atHome })),
+          suggestedTodos: d.todos.filter((x) => !x.done && x.plan === 'suggested' && x.dueDate >= t).slice(0, 15).map((x) => ({ title: x.title, due: x.dueDate, goalId: x.goalId || null })),
           totalAssets: d.investments.reduce((s, i) => s + (i.amount || 0), 0),
         });
       },
@@ -216,8 +218,44 @@ export function createPkgTools(env) {
         const id = await appendItem('todos', {
           title: a.title, priority: a.priority || 'mid', done: false,
           dueDate: a.dueDate || today(), category: a.category || '',
+          ...(a.atHome ? { atHome: true } : {}),
+          ...(a.goalId ? { goalId: String(a.goalId) } : {}),
         });
         return { ok: true, id };
+      },
+
+      // 把目标拆成参考计划：一次写入一整份「建议」待办（不提醒、不算没完成；用户点「今天做」才变承诺）
+      // 同一目标重新拆解时，替换该目标下尚未承诺、未完成的旧建议
+      async suggest_plan(a) {
+        const items = Array.isArray(a.items) ? a.items : [];
+        if (!items.length) throw new Error('items 不能为空：[{ title, dueDate, priority? }]');
+        if (items.length > 40) throw new Error('一次最多 40 条建议，计划宜少不宜多');
+        const goalId = a.goalId ? String(a.goalId) : '';
+        const t = today();
+        const clean = [];
+        for (const x of items) {
+          const title = typeof x?.title === 'string' ? x.title.trim().slice(0, 80) : '';
+          if (!title) continue;
+          const due = typeof x.dueDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(x.dueDate) ? x.dueDate : t;
+          clean.push({
+            id: uid(), title, done: false, plan: 'suggested',
+            priority: ['high', 'mid', 'low'].includes(x.priority) ? x.priority : 'mid',
+            dueDate: due < t ? t : due, category: typeof x.category === 'string' ? x.category.slice(0, 20) : '',
+            ...(goalId ? { goalId } : {}),
+          });
+        }
+        if (!clean.length) throw new Error('没有有效的建议条目（每条需要 title）');
+        let replaced = 0;
+        await store.tx((d) => {
+          if (goalId) {
+            const before = d.todos.length;
+            d.todos = d.todos.filter((x) => !(x.goalId === goalId && x.plan === 'suggested' && !x.done));
+            replaced = before - d.todos.length;
+          }
+          d.todos.push(...clean);
+        }, { source: 'agent' });
+        const days = [...new Set(clean.map((x) => x.dueDate))].sort();
+        return { ok: true, added: clean.length, replaced, days, note: '已写入为「建议」。用户在「今天」里点「今天做」才会变成承诺并参与提醒。' };
       },
 
       // count → rruleUntil 换算（移植自 index.html add_schedule handler）

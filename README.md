@@ -12,13 +12,14 @@ paa/core/      大脑层（宿主无关）：AgentLoop 循环、Planner 任务�
 paa/tools/     内置工具：fs_* / shell_run / memory_* / artifact_* / pkg_* / web_*
 paa/pkgs/      技能包（ToolPkg：manifest.json + impl.mjs），如 life 生活数据包
 paa/cli/       宿主 1：终端（交互 / --once / --goal 长任务 / --resume 续跑）
-paa/server/    宿主 2：控制台服务（HTTP + REST + WebSocket），默认 127.0.0.1:8765
+paa/server/    宿主 2：控制台服务（HTTP + REST + WebSocket），默认 127.0.0.1:18765
 console.html   控制台前端（chat 主区 + 生活面板，唯一前端）
 fonts/         控制台字体（本地打包，离线可用）
 ```
 
 - **零运行时依赖**：Node 直接运行 `.ts`（类型剥离），不需要构建；只有 `typescript` / `@types/node` 两个开发依赖。
 - **文件即数据**：记忆、产物、会话、生活数据都是 `paa/` 下的 JSON / JSONL 文件，全部在 `.gitignore` 里，不会进仓库。
+- **把目标落到每天**：和 Yours 聊目标，它拆成这周每天的「建议」；你挑今天要做的变成「承诺」；到家后还有没做完的，按你定的规则提醒（默认关闭，见 [docs/NUDGE-SETUP.md](docs/NUDGE-SETUP.md)）。产品思路见 [docs/PRD.md](docs/PRD.md)。
 - **MCP**：`config.json` 的 `mcpServers` 挂任意 MCP server，工具按它声明的只读/破坏性自动定风险等级。已适配 Google 日历，见 [docs/CALENDAR-SETUP.md](docs/CALENDAR-SETUP.md)。
 - **可选云同步**：登录 GitHub（Supabase 托管）后多设备同步生活数据，见 [docs/SUPABASE-SETUP.md](docs/SUPABASE-SETUP.md)。
 
@@ -30,7 +31,7 @@ fonts/         控制台字体（本地打包，离线可用）
 
 ```bash
 cd paa
-npm run demo          # 然后打开 http://127.0.0.1:8765
+npm run demo          # 然后打开 http://127.0.0.1:18765
 ```
 
 演示模式用脚本化的回复代替模型，能听懂「午饭吃了饭团和拿铁」「喝了 500ml 水」「明天下午 3 点开组会」这类话，并走真实的确认流程和数据写回。数据放在临时目录并预置了示例，不会碰你的 `paa/data`。
@@ -57,7 +58,7 @@ node cli/main.ts --agent reviewer --once "审查 core/planner.ts"   # 只读评�
 控制台：
 
 ```bash
-node server/main.ts             # 然后浏览器打开 http://127.0.0.1:8765
+node server/main.ts             # 然后浏览器打开 http://127.0.0.1:18765
 ```
 
 Windows 开机自启与崩溃看门狗脚本在 `tools/`（`register-startup.ps1` / `register-tasks.ps1`）。

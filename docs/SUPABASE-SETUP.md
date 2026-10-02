@@ -126,11 +126,11 @@ create policy "session_events own" on public.session_events
 2. 找到 **Redirect URLs** 一栏，点 **Add redirect URL**，逐条加（写死匹配，不要通配）：
 
 ```
-http://127.0.0.1:8765/api/auth/callback
-http://localhost:8765/api/auth/callback
+http://127.0.0.1:18765/api/auth/callback
+http://localhost:18765/api/auth/callback
 ```
 
-3. 确认 **Site URL** 填 `http://127.0.0.1:8765`（或 `http://localhost:8765`），点 **Save**
+3. 确认 **Site URL** 填 `http://127.0.0.1:18765`（或 `http://localhost:18765`），点 **Save**
 
 > ⚠️ 换端口（server 跑在别的 port）时，这里必须同步加一条新地址，否则登录又跳不回来。
 

@@ -4,6 +4,7 @@
 // 对齐此前 G3/G4 闭环验证过的能力（行切片读、唯一匹配 patch）
 // ============================================================
 
+import { classifyShell } from './shell-policy.ts';
 import { readFile, writeFile, appendFile, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { TextDecoder } from 'node:util';
@@ -27,10 +28,6 @@ async function missingHint(absRoot: string, rel: string, file: string): Promise<
   }
 }
 
-const SHELL_BLACKLIST = [
-  'rm -rf', 'rmdir /s', 'del /s', 'format ', 'shutdown', 'diskpart',
-  'reg delete', 'cipher /w', 'remove-item -recurse', '-recurse -force',
-];
 
 export function createCoreTools(root: string): ToolDefinition[] {
   const absRoot = path.resolve(root);
@@ -232,10 +229,10 @@ export function createCoreTools(root: string): ToolDefinition[] {
       risk: 4,
       handler: async (args: Record<string, unknown>, ctx: ExecContext) => {
         const cmd = String(args.command);
-        const hit = SHELL_BLACKLIST.find((b) => cmd.toLowerCase().includes(b));
-        if (hit) {
-          ctx.audit(`[AUTO] shell 黑名单命中: ${hit}`);
-          throw new Error(`命令命中黑名单: ${hit}`);
+        const verdict = classifyShell(cmd);
+        if (verdict.level === 'blocked') {
+          ctx.audit(`[AUTO] shell 硬拒绝: ${verdict.reason}`);
+          throw new Error(`命令被拒绝（${verdict.reason}）：这类操作不可逆，agent 不允许执行，需要的话请你手动执行`);
         }
         const { exec } = await import('node:child_process');
         // Windows cmd 默认 GBK 输出：切 UTF-8 代码页 + buffer 解码（UTF-8 失败回退 GBK），消除中文乱码

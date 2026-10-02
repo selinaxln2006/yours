@@ -8,6 +8,7 @@
 //   · 检索 0 LLM 成本（本地关键词+标签），写侧除 consolidate 外 0 LLM
 // ============================================================
 
+import { readFileSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type {
@@ -26,53 +27,41 @@ export interface JsonMemoryProviderOptions {
   persistL0?: boolean;
 }
 
-/** L3 画像种子：从 WorkBuddy MEMORY.md / USER.md 编译的俪宁长期画像（记忆主权起点） */
-export function createDefaultPersonaSeed(): MemoryRecord[] {
+/**
+ * L3 画像种子：首次初始化记忆时写入的"关于用户的长期事实"。
+ * 个人信息不入库——从可选的私有文件读取（paa/data/persona.json，在 .gitignore 里）：
+ *   [{ "content": "…", "tags": ["persona", "preference"] }, …]
+ * 文件不存在或格式不对 → 空种子（agent 从对话里慢慢认识用户）
+ */
+export function createDefaultPersonaSeed(file?: string): MemoryRecord[] {
+  if (!file) return [];
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(file, 'utf8'));
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(raw)) return [];
   const now = Date.now();
-  const mk = (id: string, content: string, tags: string[]): MemoryRecord => ({
-    id,
-    layer: 'L3',
-    type: 'persona',
-    content,
-    tags,
-    source: 'import',
-    validAt: now,
-    invalidAt: null,
-    createdAt: now,
-    updatedAt: now,
+  const out: MemoryRecord[] = [];
+  raw.forEach((x, i) => {
+    const content = typeof x === 'string' ? x : (x as { content?: unknown })?.content;
+    if (typeof content !== 'string' || !content.trim()) return;
+    const tags = Array.isArray((x as { tags?: unknown })?.tags) ? ((x as { tags: unknown[] }).tags.filter((t) => typeof t === 'string') as string[]) : ['persona'];
+    out.push({
+      id: `seed_persona_${i}`,
+      layer: 'L3',
+      type: 'persona',
+      content: content.trim(),
+      tags,
+      source: 'import',
+      validAt: now,
+      invalidAt: null,
+      createdAt: now,
+      updatedAt: now,
+    });
   });
-  return [
-    mk(
-      'seed_persona_base',
-      '俪宁：NUS BBA 大二升大三，ENTP，架构师/产品思维，重视系统设计与产品直觉，注重"有方向感的成长叙事"。',
-      ['persona', 'user'],
-    ),
-    mk(
-      'seed_persona_comm',
-      '俪宁沟通偏好：简体中文、结构化输出（表格+分级标题+P0-P4 优先级）、批量执行、格式化任务零内容改动、高审美、分步增量预览。深夜型。',
-      ['persona', 'preference'],
-    ),
-    mk(
-      'seed_persona_priority',
-      '俪宁优先级：P0 学业/DDP > P1 RA 套磁 > P2 工具链(pandas/SQL/Git) > P3 Numerai > P4 个人项目。',
-      ['persona', 'priority'],
-    ),
-    mk(
-      'seed_persona_career',
-      '俪宁职业方向：量化研究(QR)，WorldQuant Consultant（Top 5%，30+ alpha），腾讯 AI Agent 产品/运营实习，Numerai 参赛（shu-v1-ling），目标 MFE（CMU/Berkeley/Baruch/NUS/NYU/Columbia）。',
-      ['persona', 'career'],
-    ),
-    mk(
-      'seed_persona_project',
-      '俪宁核心项目：PAA（Personal AI Agent Framework）——终极形态为 Codex 式入口型 agent（自主循环+技能下载+跨场景执行），生活工作台 PWA 只是其第一个宿主；记忆主权是主叙事。',
-      ['persona', 'project'],
-    ),
-    mk(
-      'seed_persona_paa',
-      'PAA 技术路线：TS 自研大脑层（AgentLoop/ToolPipeline/LLMAdapter/SessionMgr），CLI 宿主 Node 24 直接跑 TS；开发者日志与代码同生；俪宁亲自验收每次闭环（验收标准见 paa/docs）。',
-      ['persona', 'paa'],
-    ),
-  ];
+  return out;
 }
 
 export class JsonMemoryProvider implements MemoryProvider {
