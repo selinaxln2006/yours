@@ -5,12 +5,12 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
-  normalizeConfig, inQuiet, pendingForNudge, shouldSend, composeMessage, buildRequest, freshState, ymd,
+  normalizeConfig, inQuiet, pendingForNudge, shouldSend, shouldEvening, dueCheckins, composeMessage, buildRequest, freshState, ymd,
   NudgeEngine, DEFAULT_CONFIG, type NudgeConfig, type TodoLike,
 } from '../server/nudge.ts';
 
 const at = (h: number, m = 0): Date => new Date(2026, 9, 2, h, m);
-const on = (over: Partial<NudgeConfig> = {}): NudgeConfig => normalizeConfig({ ...DEFAULT_CONFIG, enabled: true, ...over });
+const on = (over: Partial<NudgeConfig> = {}): NudgeConfig => normalizeConfig({ ...DEFAULT_CONFIG, enabled: true, homeDelayMin: 0, ...over });
 
 test('normalizeConfig：默认关闭；非法值回落；gentle 只发一次；坏 URL 退回不推送', () => {
   assert.equal(normalizeConfig(undefined).enabled, false);
@@ -103,7 +103,7 @@ test('NudgeEngine：到家立即发第一条；间隔后跟进；次数满停止
     fetchImpl: async (url) => { calls.push(url); return { ok: false, status: 500 }; },
   });
   await e.init();
-  await e.setConfig({ enabled: true, level: 'follow', intervalMin: 30, maxCount: 2, quietStart: '00:00', quietEnd: '00:00', channel: { type: 'ntfy', url: 'https://ntfy.sh/t' } });
+  await e.setConfig({ enabled: true, level: 'follow', intervalMin: 30, maxCount: 2, homeDelayMin: 0, quietStart: '00:00', quietEnd: '00:00', channel: { type: 'ntfy', url: 'https://ntfy.sh/t' } });
   const t0 = new Date(); t0.setHours(19, 0, 0, 0);
   const r = await e.arrive(t0);
   assert.equal(r.sent, true);
@@ -126,4 +126,45 @@ test('NudgeEngine：到家立即发第一条；间隔后跟进；次数满停止
   todos = [{ title: '写报告', dueDate: today, done: true }];
   await e2.arrive(t0);
   assert.equal(e2.state.sent, 0);
+});
+
+test('到家延迟：到家后先等 homeDelayMin 分钟再问', () => {
+  const st = { ...freshState(at(19)), arrivedAt: at(19).getTime() };
+  assert.ok(!shouldSend(on({ homeDelayMin: 20 }), st, 1, at(19, 10)));
+  assert.ok(shouldSend(on({ homeDelayMin: 20 }), st, 1, at(19, 20)));
+  assert.equal(normalizeConfig({}).homeDelayMin, 15, '默认等 15 分钟');
+});
+
+test('晚间检查：到点、有没完成的、今天没发过才发；关掉 / 没设时间不发', () => {
+  const st = freshState(at(21));
+  assert.ok(shouldEvening(on({ eveningAt: '21:00' }), st, 2, at(21, 5)));
+  assert.ok(!shouldEvening(on({ eveningAt: '21:00' }), st, 2, at(20, 59)));
+  assert.ok(!shouldEvening(on({ eveningAt: '21:00' }), { ...st, eveningSent: true }, 2, at(21, 5)));
+  assert.ok(!shouldEvening(on({ eveningAt: '21:00' }), st, 0, at(21, 5)));
+  assert.ok(!shouldEvening(on({ eveningAt: '' }), st, 2, at(21, 5)));
+  assert.ok(!shouldEvening(on({ eveningAt: '21:00', enabled: false }), st, 2, at(21, 5)));
+  assert.equal(normalizeConfig({ eveningAt: '9pm' }).eveningAt, '');
+});
+
+test('回访：到期才发，安静时段里等着；引擎发完即删，且不受总开关影响', async () => {
+  const c = [{ id: 'a', dueAt: at(19).getTime(), message: 'm', createdAt: 0 }];
+  assert.equal(dueCheckins(c, on(), at(18, 59)).length, 0);
+  assert.equal(dueCheckins(c, on(), at(19)).length, 1);
+  assert.equal(dueCheckins(c, on({ quietStart: '18:00', quietEnd: '20:00' }), at(19)).length, 0);
+  const dir = mkdtempSync(path.join(tmpdir(), 'paa-ci-'));
+  const got: string[] = [];
+  const e = new NudgeEngine({ dataDir: dir, getTodos: () => [], broadcast: (m) => got.push(m.body), fetchImpl: async () => ({ ok: true, status: 200 }) });
+  await e.init();
+  await e.setConfig({ enabled: false, quietStart: '00:00', quietEnd: '00:00' });
+  const now = new Date();
+  await e.scheduleCheckin(30, '躺了半小时了，起来做「写报告」？', now);
+  assert.equal(await e.tick(new Date(now.getTime() + 10 * 60_000)), false);
+  await e.tick(new Date(now.getTime() + 31 * 60_000));
+  assert.deepEqual(got, ['躺了半小时了，起来做「写报告」？']);
+  assert.equal(e.checkins.length, 0);
+  const e2 = new NudgeEngine({ dataDir: dir, getTodos: () => [], broadcast: () => {} });
+  await e2.scheduleCheckin(5, 'x', now);
+  const e3 = new NudgeEngine({ dataDir: dir, getTodos: () => [], broadcast: () => {} });
+  await e3.init();
+  assert.equal(e3.checkins.length, 1, '回访落盘，重启后还在');
 });
