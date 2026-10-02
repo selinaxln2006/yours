@@ -65,6 +65,7 @@ export class ToolPipeline {
       const ok = await ctx.ask(
         `允许执行 [${tool.name}]？\n  参数: ${JSON.stringify(call.arguments)}`,
         tool.name,
+        call.arguments,
       );
       if (!ok) {
         ctx.audit(`[AUTO] ${tool.name} 被用户拒绝`);

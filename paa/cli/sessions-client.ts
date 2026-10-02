@@ -1,6 +1,6 @@
 // ============================================================
 // 多会话 CLI 前端 — 经 HTTP 调用 server 的会话 API（不直连 store）
-// 用法：node cli/sessions-client.ts [--port N] [--base http://127.0.0.1:8765]
+// 用法：node cli/sessions-client.ts [--port N] [--base http://127.0.0.1:18765]
 // 交互命令：
 //   /sessions          列出全部会话
 //   /open <id>         切换/查看某会话（显示历史消息）
@@ -56,7 +56,7 @@ interface SendReply {
 
 /** 解析 --port / --base 参数 */
 function parseArgs(argv: string[]): { base: string } {
-  let base = 'http://127.0.0.1:8765';
+  let base = 'http://127.0.0.1:18765';
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--port' && argv[i + 1]) {
       const n = Number(argv[i + 1]);

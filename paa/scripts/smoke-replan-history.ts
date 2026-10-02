@@ -12,7 +12,7 @@ import { SessionMgr } from '../core/session-mgr.ts';
 import type { TaskTree, TaskHistoryEntry } from '../core/planner.ts';
 
 const PAA_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const PORT = 18665; // 专用端口，避开默认 8765
+const PORT = 18665; // 专用端口，避开默认 18765
 
 async function httpGet(url: string, timeoutMs = 5000): Promise<{ status: number; body: any }> {
   const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });

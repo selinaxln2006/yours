@@ -12,7 +12,7 @@ paa/core/      大脑层（宿主无关）：AgentLoop 循环、Planner 任务�
 paa/tools/     内置工具：fs_* / shell_run / memory_* / artifact_* / pkg_* / web_*
 paa/pkgs/      技能包（ToolPkg：manifest.json + impl.mjs），如 life 生活数据包
 paa/cli/       宿主 1：终端（交互 / --once / --goal 长任务 / --resume 续跑）
-paa/server/    宿主 2：控制台服务（HTTP + REST + WebSocket），默认 127.0.0.1:8765
+paa/server/    宿主 2：控制台服务（HTTP + REST + WebSocket），默认 127.0.0.1:18765
 console.html   控制台前端（chat 主区 + 生活面板，唯一前端）
 fonts/         控制台字体（本地打包，离线可用）
 ```
@@ -30,7 +30,7 @@ fonts/         控制台字体（本地打包，离线可用）
 
 ```bash
 cd paa
-npm run demo          # 然后打开 http://127.0.0.1:8765
+npm run demo          # 然后打开 http://127.0.0.1:18765
 ```
 
 演示模式用脚本化的回复代替模型，能听懂「午饭吃了饭团和拿铁」「喝了 500ml 水」「明天下午 3 点开组会」这类话，并走真实的确认流程和数据写回。数据放在临时目录并预置了示例，不会碰你的 `paa/data`。
@@ -57,7 +57,7 @@ node cli/main.ts --agent reviewer --once "审查 core/planner.ts"   # 只读评�
 控制台：
 
 ```bash
-node server/main.ts             # 然后浏览器打开 http://127.0.0.1:8765
+node server/main.ts             # 然后浏览器打开 http://127.0.0.1:18765
 ```
 
 Windows 开机自启与崩溃看门狗脚本在 `tools/`（`register-startup.ps1` / `register-tasks.ps1`）。

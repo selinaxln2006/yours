@@ -48,7 +48,8 @@ export interface ExecContext {
   sessionId: string;
   cwd: string;
   /** 权限确认回调（由 CLI/宿主实现，人机交互）；toolName 供宿主做会话级放行（如 "a"=always allow） */
-  ask: (prompt: string, toolName?: string) => Promise<boolean>;
+  /** 第三个参数是工具调用参数（宿主可据此做更细的判断，如 shell 命令分级）；旧宿主可忽略 */
+  ask: (prompt: string, toolName?: string, args?: Record<string, unknown>) => Promise<boolean>;
   /** 审计日志（[AUTO] 行） */
   audit: (line: string) => void;
 }

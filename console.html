@@ -727,7 +727,7 @@ function rememberLanToken(token){
 }
 /* ================================================================
    Yours · PAA Console — 状态驱动控制台
-   数据主权在 Node 侧 JSON 文件；本页不落 localStorage（仅迁移按钮只读旧值）
+   数据主权在 Node 侧 JSON 文件；本页只在 localStorage 存外观偏好（日夜/货币）
    ================================================================ */
 
 /* ---------- utils ---------- */
@@ -2491,20 +2491,17 @@ function pSettings(d){
     '<select id="lvSel">' + [0,1,2,3,4].map(l=>'<option value="'+l+'"'+(S.level===l?' selected':'')+'>L'+l+'</option>').join('') + '</select>';
   c.appendChild(set);
   const set2 = document.createElement('div'); set2.className='set';
-  set2.innerHTML = '<div class="lab"><b>硬底线</b><span>destructive / privacy 类工具永远需签收，L4 也不例外</span></div><span class="chip">ACTIVE</span>';
+  set2.innerHTML = '<div class="lab"><b>硬底线</b><span>执行命令、删除记忆等危险操作每次都要你确认，L4 也不例外</span></div><span class="chip">始终开启</span>';
   c.appendChild(set2);
   f.appendChild(c);
 
-  const c2 = card('数据与存储', '数据主权在 Node 侧');
-  const s1 = document.createElement('div'); s1.className='set';
-  s1.innerHTML = '<div class="lab"><b>旧 PWA 数据迁移</b><span>index.html 时代的 localStorage 数据（开发期假数据，可忽略）</span></div><button class="btn" id="migBtn">迁移</button>';
-  c2.appendChild(s1);
+  const c2 = card('数据与存储', '都在这台电脑的 paa/data 里');
   const s2 = document.createElement('div'); s2.className='set';
   s2.innerHTML = '<div class="lab"><b>会话</b><span>' + esc(S.sessionId || '—') + '</span></div>';
   c2.appendChild(s2);
   f.appendChild(c2);
 
-  const c3 = card('本轮消耗', '精确 token 账本待 adapter usage 接入');
+  const c3 = card('运行信息');
   row(c3, 'WS 连接', location.host, 'cool');
   row(c3, '已注册工具', S.tools.length + ' 个', 'cool');
   row(c3, '技能包', (S.pkgs||[]).join(' · ') || '—', 'acc');
@@ -2518,18 +2515,6 @@ function pSettings(d){
         await fetch('/api/level', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ level: v }) });
         S.level = v; renderHeader(); toast('自治级别 → L' + v);
       }catch(e){ toast('设置失败：' + e.message); }
-    });
-    const mig = $('#migBtn');
-    if (mig) mig.addEventListener('click', async () => {
-      let blob;
-      try{ blob = JSON.parse(localStorage.getItem('shu_wb_v1') || 'null'); }catch{ blob = null; }
-      if (!blob){ toast('旧数据不存在或已损坏'); return; }
-      try{
-        const r = await fetch('/api/import', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ blob, mode:'merge' }) });
-        const j = await r.json();
-        if (j.ok){ toast('迁移完成：' + (j.keys||[]).length + ' 个键'); fetchData(); }
-        else toast('迁移失败：' + (j.error||''));
-      }catch(e){ toast('迁移失败：' + e.message); }
     });
   });
   return f;

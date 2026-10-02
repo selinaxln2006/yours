@@ -55,7 +55,7 @@ let DATA_ROOT = PAA_ROOT;
 /** agent 文件/命令工具的沙箱根；演示模式下是临时目录里的 workspace，不碰仓库 */
 let AGENT_ROOT = WORKSPACE_ROOT;
 
-// ---- 参数：--port N / PAA_PORT（默认 8765） ----
+// ---- 参数：--port N / PAA_PORT（默认 18765；8765 常被其他项目占用） ----
 function resolvePort(): number {
   const argv = process.argv;
   for (let i = 0; i < argv.length; i++) {
@@ -65,7 +65,7 @@ function resolvePort(): number {
     }
   }
   const env = Number(process.env.PAA_PORT);
-  return env > 0 && env < 65536 ? env : 8765;
+  return env > 0 && env < 65536 ? env : 18765;
 }
 const PORT = resolvePort();
 // 监听地址：默认仅本机；LAN 模式（手机端）在启动时根据 paa/data/lan.json 的 lan:true 提升为 0.0.0.0
@@ -77,7 +77,7 @@ const MAX_ROUNDS = (() => {
   return Number.isInteger(n) && n > 0 && n <= 200 ? n : 24;
 })();
 
-const SYSTEM_PROMPT = `你是 Yours，俪宁的跨界 AI 搭档，现在运行在生活工作台控制台里。锐利、直接、不谄媚；长内容用分级标题；默认简体中文；不说废话客套。
+const SYSTEM_PROMPT = `你是 Yours，用户的个人 AI 搭档，现在运行在生活工作台控制台里。锐利、直接、不谄媚；长内容用分级标题；默认简体中文；不说废话客套。
 
 当前已注册工具（回答"你能做什么/能上网吗"时以此清单为准，逐项如实陈述；不夸大能力，也不自我设限——有 shell 和 web 工具就能联网，不要说"我没有网络"）：
 __TOOLS__
@@ -118,10 +118,23 @@ __TOOLS__
 - 对话中发现的重要事实/偏好/决策，用 memory_save 主动固化（选好 type 和 tags；默认存 L1 事实层）
 - 零散事实积累多了，用 memory_consolidate 聚合为 L2 场景块 / 更新 L3 画像
 
-平台纪律（Windows 环境）：
-- 文件检索用 fs_grep（正则），列目录用 fs_list，读文件用 fs_read（行切片）
+__PLATFORM__
 
 写操作（life_* 的 risk3 工具 / fs_write / shell_run 等）会推确认卡到用户界面，用户允许后才执行。`;
+
+/** 平台纪律按实际系统给（别人装在 macOS / Linux 上也对） */
+function platformRule(): string {
+  return process.platform === 'win32'
+    ? '平台纪律（Windows 环境）：\n- shell 用 PowerShell / cmd 语法；文件检索用 fs_grep（正则），列目录用 fs_list，读文件用 fs_read（行切片）'
+    : `平台纪律（${process.platform === 'darwin' ? 'macOS' : 'Linux'} 环境）：\n- shell 用 POSIX 语法；文件检索仍优先用 fs_grep / fs_list / fs_read`;
+}
+
+/** 用户称呼：来自生活数据里的个人资料，不写死在代码里 */
+function userLine(store: LifeStore): string {
+  const prof = store.get('profile') as { name?: unknown } | undefined;
+  const name = typeof prof?.name === 'string' ? prof.name.trim().slice(0, 40) : '';
+  return name ? `\n\n用户的称呼：${name}` : '';
+}
 
 // ---- 配置 ----
 async function loadLlmConfig(): Promise<LLMConfig | null> {
@@ -349,7 +362,6 @@ function sanitize(key: string, value: unknown): unknown {
 function isPublicAsset(rel: string): boolean {
   return (
     rel === 'console.html' ||
-    rel === 'mobile.html' ||
     rel === 'manifest.webmanifest' ||
     /^icons\/[a-z0-9-]+\.png$/.test(rel) ||
     /^fonts\/[a-z0-9-]+\.woff2$/.test(rel)
@@ -358,6 +370,12 @@ function isPublicAsset(rel: string): boolean {
 
 async function serveStatic(res: ServerResponse, urlPath: string): Promise<void> {
   const rel = urlPath === '/' || urlPath === '' ? 'console.html' : urlPath.slice(1);
+  // mobile.html 已退役（console.html 本身适配手机）：旧书签 / 主屏图标跳到首页
+  if (rel === 'mobile.html') {
+    res.writeHead(301, { Location: '/' });
+    res.end();
+    return;
+  }
   if (!isPublicAsset(rel)) {
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('not found');
@@ -564,7 +582,7 @@ async function main(): Promise<void> {
   // 大脑层
   const memory = new JsonMemoryProvider({
     filePath: path.join(DATA_ROOT, 'memory', 'store.json'),
-    seed: createDefaultPersonaSeed(),
+    seed: DEMO ? [] : createDefaultPersonaSeed(path.join(PAA_ROOT, 'data', 'persona.json')),
   });
   await memory.init();
   const artifacts = new FileArtifactProvider(path.join(DATA_ROOT, 'artifacts'));
@@ -627,7 +645,7 @@ async function main(): Promise<void> {
     adapter,
     pipeline,
     session,
-    systemPrompt: SYSTEM_PROMPT.replace('__TOOLS__', toolsDesc) + (calClient
+    systemPrompt: SYSTEM_PROMPT.replace('__TOOLS__', toolsDesc).replace('__PLATFORM__', platformRule()) + userLine(lifeStore) + (calClient
       ? `\n\n日历：用户的真实日历通过 mcp_${sanitizeServerName(calClient.name)}_* 工具访问（Google 日历等）。问到安排时，本地日程（life_*）和日历都要看；往日历里加/改/删事件会推确认卡。`
       : ''),
     memoryProvider: memory,

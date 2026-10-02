@@ -19,6 +19,7 @@ import { FileArtifactProvider } from '../core/artifact-provider.ts';
 import { PkgLoader } from '../core/pkg-loader.ts';
 import { McpClient, createMcpToolDefinitions, type McpServerConfig } from '../core/mcp-client.ts';
 import { createCoreTools } from '../tools/core-tools.ts';
+import { classifyShell } from '../tools/shell-policy.ts';
 import { createSvcTools } from '../tools/svc-tools.ts';
 import { createMemoryTools } from '../tools/memory-tools.ts';
 import { createArtifactTools } from '../tools/artifact-tools.ts';
@@ -30,7 +31,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PAA_ROOT = path.resolve(__dirname, '..');
 const WORKSPACE_ROOT = path.resolve(PAA_ROOT, '..');
 
-const SYSTEM_PROMPT = `你是 Yours，俪宁的跨界 AI 搭档。锐利、直接、不谄媚；长内容用分级标题；默认简体中文；不说废话客套。
+const SYSTEM_PROMPT = `你是 Yours，用户的个人 AI 搭档。锐利、直接、不谄媚；长内容用分级标题；默认简体中文；不说废话客套。
 
 操作硬纪律（必须遵守）：
 1. 定位：先用 fs_list / fs_grep / fs_read 找到目标文件和上下文，不要瞎猜路径
@@ -41,8 +42,11 @@ const SYSTEM_PROMPT = `你是 Yours，俪宁的跨界 AI 搭档。锐利、直�
 6. 不确定先问：模糊场景先向用户说明再动手
 7. 大文件写纪律（>200 行）：禁止一次性写完整个文件（单轮输出会截断）。必须分段：第一轮 fs_write 写文件头+骨架（含注释/导入/类型定义），后续每轮用 fs_append 追加一段（每段 ≤150 行）；全部写完后再 fs_read 验证行数与关键锚点
 
-平台纪律（当前是 Windows/cmd 环境，必须遵守）：
-- pwd / ls / cat / grep / head / which / touch / rm / mv / wc 等 Unix 命令不存在，不要用
+${process.platform === 'win32'
+    ? `平台纪律（当前是 Windows/cmd 环境，必须遵守）：
+- pwd / ls / cat / grep / head / which / touch / rm / mv / wc 等 Unix 命令不存在，不要用`
+    : `平台纪律（当前是 ${process.platform === 'darwin' ? 'macOS' : 'Linux'}，shell 用 POSIX 语法）：
+- 能用 fs_* 工具完成的不要用 shell`}
 - 文件检索用 fs_grep（正则），列目录用 fs_list，读文件用 fs_read（行切片）
 - shell_run 只用于真实需要的命令（node / npm / git / tsc）；命令输出已自动做 GBK/UTF-8 编码转换，但解析输出仍以英文/结构化内容为准
 - 路径分隔符正反斜杠均可，fs 工具自动处理
@@ -235,7 +239,7 @@ async function main(): Promise<void> {
   // 记忆系统（C4）：JSON 文件存储 + L3 画像种子（首次自动初始化）
   const memory = new JsonMemoryProvider({
     filePath: path.join(PAA_ROOT, 'memory', 'store.json'),
-    seed: createDefaultPersonaSeed(),
+    seed: createDefaultPersonaSeed(path.join(PAA_ROOT, 'data', 'persona.json')),
   });
   await memory.init();
 
@@ -270,8 +274,19 @@ async function main(): Promise<void> {
   const trustedTools = new Set<string>();
   // risk 4 危险工具不可会话级放行（权限红线：永远逐次确认）；pipeline 建好后注入真实判定
   let isTrustable: (tool: string) => boolean = () => false;
-  const ask = async (p: string, toolName?: string): Promise<boolean> => {
-    if (yes) return true; // --yes：非交互全自动（脚本/测试/长任务实测）
+  const ask = async (p: string, toolName?: string, args?: Record<string, unknown>): Promise<boolean> => {
+    if (yes) {
+      // --yes：非交互全自动（脚本/测试/长任务实测）；但危险 shell 命令（删除/强推/下载执行…）仍要人确认
+      if (toolName !== 'shell_run') return true;
+      const v = classifyShell(String(args?.command ?? ''));
+      if (v.level === 'ok') return true;
+      if (!process.stdin.isTTY) {
+        console.log(render.error(`--yes 模式拒绝危险命令（${v.reason}），无人可确认：${String(args?.command ?? '').slice(0, 120)}`));
+        return false;
+      }
+      const a = (await rl.question(render.ask(`[--yes 例外] 危险命令（${v.reason}）\n${p}`) + ' (y/n) ')).trim().toLowerCase();
+      return a.startsWith('y');
+    }
     if (toolName && trustedTools.has(toolName)) return true;
     const a = (await rl.question(render.ask(p) + ' (y/n/a) ')).trim().toLowerCase();
     if (a === 'a' && toolName) {

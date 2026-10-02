@@ -11,8 +11,8 @@ import type { LifeStore } from '../core/life-store.ts';
 
 const ymd = (d: Date): string =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-const dayOffset = (n: number): string => {
-  const d = new Date();
+const dayOffset = (n: number, base: Date = new Date()): string => {
+  const d = new Date(base);
   d.setDate(d.getDate() + n);
   return ymd(d);
 };
@@ -62,7 +62,7 @@ export function parseIntents(text: string, now = new Date()): Intent[] {
   // 睡眠："睡了 7.5 小时"
   const sl = /睡了?\s*(\d+(?:\.\d+)?)\s*(个)?(小时|h)/i.exec(t);
   if (sl) {
-    const date = /昨/.test(t) ? dayOffset(-1) : ymd(now);
+    const date = /昨/.test(t) ? dayOffset(-1, now) : ymd(now);
     out.push({ call: { name: 'life_add_sleep', arguments: { hours: Number(sl[1]), date } }, say: `睡眠 ${sl[1]} 小时` });
   }
 
@@ -81,7 +81,7 @@ export function parseIntents(text: string, now = new Date()): Intent[] {
     let h = Number(tm[3]);
     if (/下午|晚上/.test(tm[2] ?? '') && h < 12) h += 12;
     const m = tm[4]?.includes('半') ? '30' : (tm[5] ?? '00');
-    const date = tm[1] === '明天' ? dayOffset(1) : tm[1] === '后天' ? dayOffset(2) : ymd(now);
+    const date = tm[1] === '明天' ? dayOffset(1, now) : tm[1] === '后天' ? dayOffset(2, now) : ymd(now);
     const title = t.slice(tm.index + tm[0].length).replace(/^[\s,，的]*(想|要|去|开|有)?/, '').replace(/[，。,.!！]+.*$/, '').trim().slice(0, 20) || '日程';
     out.push({ call: { name: 'life_add_schedule', arguments: { title, date, startTime: `${String(h).padStart(2, '0')}:${m}` } }, say: `日程「${title}」${date.slice(5)} ${String(h).padStart(2, '0')}:${m}` });
   }

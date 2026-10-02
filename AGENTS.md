@@ -40,7 +40,7 @@ paa/                        # PAA 大脑层（TS ESM，Node 24 直接跑 .ts，�
 ├── cli/                    # 宿主 1：CLI（node cli/main.ts）
 │   ├── main.ts             # 入口：--once / --goal / --agent / --yes 等
 │   └── render.ts           # 终端渲染
-├── server/                 # 宿主 2：console server（127.0.0.1:8765）
+├── server/                 # 宿主 2：console server（127.0.0.1:18765）
 │   ├── main.ts             # HTTP 静态+REST+WS+chat
 │   ├── request-guard.ts    # 来源门禁（Origin/Host 校验、LAN 令牌）——改 server 路由别绕过它
 │   ├── mcp.ts              # server 侧 MCP 接入：按 annotations 定风险 + 日历读取（/api/calendar）

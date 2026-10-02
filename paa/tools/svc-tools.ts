@@ -11,7 +11,7 @@ import { openSync } from 'node:fs';
 import path from 'node:path';
 import type { ToolDefinition } from '../core/types.ts';
 
-const PAA_PORT = 18765;
+const PAA_PORT = (() => { const n = Number(process.env.PAA_PORT); return n > 0 && n < 65536 ? n : 18765; })();
 
 function run(cmd: string, args: string[], timeoutMs = 15000): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
