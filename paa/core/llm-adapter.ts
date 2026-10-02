@@ -54,7 +54,8 @@ export class OpenAICompatibleAdapter implements LLMAdapter {
           properties: Object.fromEntries(
             Object.entries(t.params).map(([k, v]) => [
               k,
-              { type: v.type, description: v.desc },
+              // 严格的 OpenAI 兼容接口要求 array 必须带 items
+              v.type === 'array' ? { type: v.type, description: v.desc, items: v.items ?? {} } : { type: v.type, description: v.desc },
             ]),
           ),
           required: Object.entries(t.params)

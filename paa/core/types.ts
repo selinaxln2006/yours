@@ -32,6 +32,8 @@ export interface ParamSpec {
   type: 'string' | 'number' | 'boolean' | 'object' | 'array';
   desc: string;
   required?: boolean;
+  /** type=array 时的元素 schema（JSON Schema）；不写则不约束元素类型 */
+  items?: Record<string, unknown>;
 }
 
 /** 工具定义（注册进 ToolPipeline） */

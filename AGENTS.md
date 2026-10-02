@@ -43,6 +43,7 @@ paa/                        # PAA 大脑层（TS ESM，Node 24 直接跑 .ts，�
 ├── server/                 # 宿主 2：console server（127.0.0.1:18765）
 │   ├── main.ts             # HTTP 静态+REST+WS+chat
 │   ├── request-guard.ts    # 来源门禁（Origin/Host 校验、LAN 令牌）——改 server 路由别绕过它
+│   ├── nudge.ts            # 到家提醒：规则判断（纯函数）+ 定时 + 推送（ntfy/Bark/webhook）
 │   ├── mcp.ts              # server 侧 MCP 接入：按 annotations 定风险 + 日历读取（/api/calendar）
 │   └── demo-calendar.mjs   # 演示/测试用的假日历 MCP server
 ├── tools/                  # 内置工具组（注入到 pipeline）
@@ -61,6 +62,7 @@ paa/                        # PAA 大脑层（TS ESM，Node 24 直接跑 .ts，�
 └── config.json             # 本地密钥配置（.gitignore，不入库！）
 docs/                       # 规划与架构文档
 ├── ROADMAP.md              # ★ 全量规划（先读）
+├── PRD.md                  # 产品需求：目标→建议→承诺→到家提醒
 ├── SUPABASE-SETUP.md       # 云同步注册教程
 ├── paa-design-v2.md        # 大脑设计
 ├── paa-host-evolution-v1.md# 宿主演进

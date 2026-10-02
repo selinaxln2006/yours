@@ -39,6 +39,7 @@ import { SupabaseRealtime, type RealtimeState } from '../core/realtime.ts';
 import { checkRequestSource, generateAccessToken, redactSearch, tokenMatches } from './request-guard.ts';
 import { DemoAdapter, seedDemoData } from './demo.ts';
 import { turnMessages } from './turn.ts';
+import { NudgeEngine } from './nudge.ts';
 import {
   parseMcpServers, mcpToolDefinitions, connectMcpServers, findCalendarClient,
   fetchCalendarEvents, isValidRange, isValidTimeZone, type CalendarEvent,
@@ -84,6 +85,7 @@ __TOOLS__
 
 能力要点：
 - life_* 直接读写生活数据（目标/健身/养生/日程/待办/记账），写入实时推送用户界面；做规划前先 life_query_summary 了解现状
+- 计划分两种：目标拆解出来的参考计划用 life_suggest_plan 写成「建议」（不提醒、可以多）；用户明确说要做的事用 life_add_todo（「承诺」，会参与到家提醒）。用户说"回家后/到家要做"时 add_todo 设 atHome:true。不要替用户把建议变成承诺
 - 重复提醒用 add_schedule 的 rrule/rruleDays：每周一 → rrule:"weekly"+rruleDays:[1]，持续N周传 count:N
 - web_fetch / web_search 可直接联网查资料、抓网页、搜 GitHub；web_download 下载文件到沙箱 downloads/（skill 包、PDF 模板等）
 - shell_run（risk4 需签收）可执行任意非黑名单命令：curl / Invoke-WebRequest 也能联网，npm install 可装库（如 pdfkit 渲染 PDF）；需要时向用户说明用途并等待签收
@@ -636,6 +638,16 @@ async function main(): Promise<void> {
   /** 日历读缓存：同一区间 60s 内不重复打 MCP */
   const calCache = new Map<string, { at: number; events: CalendarEvent[] }>();
 
+  // 到家提醒（PRD §5.3）：规则在 data/nudge.json，默认关闭
+  const nudge = new NudgeEngine({
+    dataDir: path.join(DATA_ROOT, 'data'),
+    getTodos: () => (lifeStore.get('todos') as Array<Record<string, unknown>> | undefined) ?? [],
+    broadcast: (m) => broadcast(m),
+    log: (line) => console.log(line),
+  });
+  await nudge.init();
+  nudge.start();
+
   const adapter = DEMO || !llmConfig ? new DemoAdapter() : createAdapter(llmConfig);
   const toolsDesc = pipeline
     .list()
@@ -925,6 +937,39 @@ async function main(): Promise<void> {
         } catch (e) {
           sendJson(res, 502, { ok: false, error: e instanceof Error ? e.message : String(e), sync: syncInfo() });
         }
+        return;
+      }
+
+      // ---- 到家提醒 ----
+      if (p === '/api/nudge' && req.method === 'GET') {
+        sendJson(res, 200, nudge.summary(new Date()));
+        return;
+      }
+      if (p === '/api/nudge' && req.method === 'PUT') {
+        const body = JSON.parse((await readBody(req, 8192)).toString('utf8')) as unknown;
+        const config = await nudge.setConfig(body);
+        sendJson(res, 200, { ok: true, config });
+        return;
+      }
+      // "我到家了"：console 按钮 / iPhone 快捷指令（LAN 模式下带令牌）
+      if (p === '/api/home' && req.method === 'POST') {
+        const r = await nudge.arrive(new Date());
+        sendJson(res, 200, {
+          ok: true,
+          sent: r.sent,
+          enabled: nudge.config.enabled,
+          pending: r.pending.map((x) => ({ id: x.id, title: x.title, atHome: !!x.atHome })),
+        });
+        return;
+      }
+      if (p === '/api/nudge/snooze' && req.method === 'POST') {
+        await nudge.snooze(new Date());
+        broadcast({ type: 'nudge_snoozed' });
+        sendJson(res, 200, { ok: true });
+        return;
+      }
+      if (p === '/api/nudge/test' && req.method === 'POST') {
+        sendJson(res, 200, { ok: true, ...(await nudge.test()) });
         return;
       }
 
