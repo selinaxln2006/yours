@@ -479,6 +479,50 @@ html[data-theme="dark"] .tile .cover{opacity:.9}
 .ttodo .p{font:italic 12.5px var(--serif-en);color:var(--ink3)}
 .ttodo .p.high{color:var(--clay)}
 .homebar{display:flex;gap:8px}
+.cform{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin:2px 0 12px}
+.cform .cf{display:flex;flex-direction:column;gap:4px}
+.cform .cf span{font:italic 12.5px var(--serif-en);color:var(--ink3)}
+.cform input,.cform select{width:100%;background:var(--surf-hi);border:none;box-shadow:var(--recess);border-radius:10px;padding:8px 10px;font:14px var(--sans);color:var(--ink)}
+.cform input[type=checkbox]{width:18px;height:18px;box-shadow:none;accent-color:var(--clay)}
+details.cmd.raw{padding:6px 12px}
+details.cmd.raw summary{cursor:pointer;font:italic 12.5px var(--serif-en);color:var(--ink3);list-style:none}
+details.cmd.raw summary::before{content:"▸ "}
+details.cmd.raw[open] summary::before{content:"▾ "}
+details.cmd.raw div{white-space:pre-wrap;margin-top:6px}
+.gplan{margin-top:10px;border-top:1px dashed var(--line2);padding-top:6px}
+.gp{display:flex;align-items:center;gap:10px;padding:5px 0;font-size:13.5px}
+.gp .due{font:italic 12.5px var(--serif-en);color:var(--ink3);width:44px;flex-shrink:0}
+.gp .tt{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gp.sug .tt{color:var(--ink2)}
+.gp .del{opacity:.6;border:none;background:none;color:var(--ink3);cursor:pointer;font-size:13px}
+.weekly{border-radius:18px;padding:16px 18px;background:linear-gradient(135deg,color-mix(in srgb,var(--sage) 14%,transparent),color-mix(in srgb,var(--slate) 8%,transparent)),var(--surf);border:1px solid color-mix(in srgb,var(--sage) 35%,transparent);box-shadow:var(--hl),var(--shadow);animation:rise .35s cubic-bezier(.2,.7,.3,1)}
+.weekly .wk{font:italic 13.5px var(--serif-en);color:var(--sage)}
+.weekly .wt{font-family:var(--serif-zh);font-size:16px;line-height:1.85;margin:4px 0 10px}
+.weekly .wr{display:flex;gap:14px;align-items:baseline;padding:6px 0;border-top:1px solid var(--line);font-size:13px;color:var(--ink3)}
+.weekly .wr b{flex:1;font-weight:500;color:var(--ink);font-size:14px}
+.weekly .wb{display:flex;align-items:center;gap:14px;margin-top:12px}
+.memrow{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+.memrow:last-child{border-bottom:none}
+.memrow .mt{flex:1;min-width:0;font-family:var(--serif-zh);font-size:14.5px;line-height:1.7}
+.vtabs button.drag{opacity:.4}
+.vtabs button.drop{box-shadow:inset 2px 0 0 var(--clay)}
+.vtabs .tabplus{width:30px;padding:0;justify-content:center;color:var(--ink3);font:300 18px var(--sans)}
+.vtabs .tabplus:hover{color:var(--ink)}
+.tabmenu{position:fixed;z-index:50;width:220px;padding:6px;border-radius:14px;background:var(--surf-solid);border:1px solid var(--line2);box-shadow:var(--shadow);animation:rise .18s ease}
+.tabmenu .tmh{font:italic 12.5px var(--serif-en);color:var(--ink3);padding:6px 10px 4px}
+.tabmenu .tmo{display:flex;align-items:center;gap:8px;width:100%;border:none;background:none;padding:7px 10px;border-radius:9px;font-size:13.5px;color:var(--ink2);cursor:pointer;text-align:left}
+.tabmenu .tmo:hover{background:var(--bg2);color:var(--ink)}
+.tabmenu .tmo .ck{width:14px;color:var(--clay)}
+.tabmenu .tmo.reset{font:italic 13px var(--serif-en);color:var(--ink3);border-top:1px solid var(--line);border-radius:0 0 9px 9px;margin-top:4px}
+.daysep{display:flex;align-items:center;gap:12px;font:italic 13px var(--serif-en);color:var(--ink3)}
+.daysep::before,.daysep::after{content:"";flex:1;height:1px;background:var(--line2)}
+.msg[data-time]{position:relative}
+.msg.user[data-time]::after{content:attr(data-time);position:absolute;right:4px;bottom:-17px;font:italic 11.5px var(--serif-en);color:var(--ink3);opacity:0;transition:opacity .15s}
+.msg.user[data-time]:hover::after{opacity:1}
+.msg.assistant .kick[data-time]::after{content:"  " attr(data-time);color:var(--ink3);font-size:12px}
+.addbtn{width:26px;height:26px;border-radius:50%;border:none;flex-shrink:0;display:inline-grid;place-items:center;font:400 17px/1 var(--sans);color:var(--acc-ink);background:linear-gradient(180deg,color-mix(in srgb,var(--acc) 80%,white),var(--acc));box-shadow:var(--raise);cursor:pointer;transition:transform .1s}
+.addbtn:hover{filter:brightness(1.05)}
+.addbtn:active{transform:scale(.92)}
 .homebtn{height:30px;padding:0 14px;border-radius:99px;border:none;background:var(--surf-hi);box-shadow:var(--raise);font:500 12.5px var(--sans);color:var(--ink2);cursor:pointer}
 .homebtn:hover{color:var(--ink)}
 .homebtn:active{transform:translateY(1px)}
@@ -631,8 +675,7 @@ html[data-theme="dark"] .tile .cover{opacity:.9}
       <button class="nav" data-tab="schedule"><svg class="i"><use href="#i-cal"/></svg>日程<span class="c" id="c-schedule"></span></button>
       <button class="nav" data-tab="todos"><svg class="i"><use href="#i-check"/></svg>待办<span class="c" id="c-todos"></span></button>
       <button class="nav" data-tab="finance"><svg class="i"><use href="#i-wallet"/></svg>记账</button>
-      <button class="nav" data-tab="fitness"><svg class="i"><use href="#i-dumbbell"/></svg>健身</button>
-      <button class="nav" data-tab="wellness"><svg class="i"><use href="#i-leaf"/></svg>养生</button>
+      <button class="nav" data-tab="fitness"><svg class="i"><use href="#i-dumbbell"/></svg>身体</button>
       <button class="nav" data-tab="goals"><svg class="i"><use href="#i-target"/></svg>目标</button>
     </div>
     <div class="navgrp">
@@ -833,8 +876,16 @@ async function checkAuth(){
 /* ---------- 消息流（工具卡 + 日志行） ---------- */
 function renderStream(){
   const box = $('#stream'); box.textContent = '';
-  let grp = null;
+  let grp = null, lastDay = '';
+  const dayLabel = (ts) => { const d = new Date(ts); const td = todayStr(); const ds = fmtD(d);
+    const y = new Date(); y.setDate(y.getDate() - 1);
+    return ds === td ? '今天' : ds === fmtD(y) ? '昨天' : (d.getMonth() + 1) + ' 月 ' + d.getDate() + ' 日 · 周' + WDAY[d.getDay()]; };
   S.msgs.forEach((m, i) => {
+    if (m.ts && m.kind !== 'sys'){
+      const ds = fmtD(new Date(m.ts));
+      if (ds !== lastDay){ lastDay = ds; grp = null; const sep = document.createElement('div'); sep.className = 'daysep'; sep.textContent = dayLabel(m.ts); box.appendChild(sep); }
+    }
+    if (m.kind === 'weekly'){ grp = null; box.appendChild(buildWeekly(m)); return; }
     if (m.kind === 'tool'){
       // 连续的工具调用合成一张卡（B 式"记了什么"）
       if (!grp){ grp = document.createElement('div'); grp.className = 'tgroup glass'; box.appendChild(grp); }
@@ -881,24 +932,77 @@ function pushMsg(m){
 function caretEl(){ const c = document.createElement('span'); c.className = 'caret'; return c; }
 function chatVisible(){ return $('#chatView').offsetParent !== null; }
 /* ---------- 视图：today / chat / panel（S.tab） ---------- */
-const TAB_NAME = { schedule:'日程', todos:'待办', finance:'记账', fitness:'健身', wellness:'养生', goals:'目标', memory:'记忆', tasks:'任务树', settings:'设置' };
-const LIFE_TABS = ['schedule','todos','finance','fitness','wellness','goals'];
-const TAB_EN = { schedule:'Schedule', todos:'To do', finance:'Money', fitness:'Fitness', wellness:'Wellness', goals:'Goals', memory:'Memory', tasks:'Task tree', settings:'Settings' };
+const TAB_NAME = { schedule:'日程', todos:'待办', finance:'记账', fitness:'身体', goals:'目标', memory:'它眼中的你', tasks:'任务树', settings:'设置' };
+const LIFE_TABS = ['schedule','todos','finance','fitness','goals'];
+const TAB_EN = { schedule:'Schedule', todos:'To do', finance:'Money', fitness:'Body', goals:'Goals', memory:'Memory', tasks:'Task tree', settings:'Settings' };
 /* 顶部立体 tab：对话 + 三个最常用面板（其余在侧栏 / ⌘K） */
-const VTABS = [['chat','对话',''], ['schedule','日程','t1'], ['finance','记账','t3'], ['fitness','健身','t2']];
+/* 顶部 tab：可拖拽排序，「+」增删；顺序只存在这台设备 */
+const TAB_SW = { chat:'', schedule:'t1', finance:'t3', fitness:'t2', todos:'t4', goals:'', memory:'t2', tasks:'t4', settings:'t1' };
+const TAB_DEFAULT = ['chat', 'schedule', 'finance', 'fitness'];
+const tabLabel = (k) => k === 'chat' ? '对话' : (TAB_NAME[k] || k);
+function getTabs(){
+  try {
+    const a = JSON.parse(localStorage.getItem('paaTabs') || 'null');
+    if (Array.isArray(a)){ const ok = a.filter(k => k === 'chat' || TAB_NAME[k]); if (ok.length) return [...new Set(ok)]; }
+  } catch { /* 忽略 */ }
+  return TAB_DEFAULT.slice();
+}
+function setTabs(a){
+  try { localStorage.setItem('paaTabs', JSON.stringify(a)); } catch { /* 忽略 */ }
+  document.querySelectorAll('.vtabs').forEach(b => { b.textContent = ''; });
+  renderVtabs();
+}
+let _dragTab = null;
 function renderVtabs(){
   const cur = S.v === 'panel' ? S.tab : S.v;
+  const tabs = getTabs();
   document.querySelectorAll('.vtabs').forEach(box => {
     if (!box.childElementCount){
-      for (const [k, n, sw] of VTABS){
-        const b = document.createElement('button'); b.dataset.k = k;
-        b.innerHTML = '<i class="sw ' + sw + '"></i>'; b.appendChild(document.createTextNode(n));
+      for (const k of tabs){
+        const b = document.createElement('button'); b.dataset.k = k; b.draggable = true;
+        b.innerHTML = '<i class="sw ' + (TAB_SW[k] || '') + '"></i>'; b.appendChild(document.createTextNode(tabLabel(k)));
         b.addEventListener('click', () => k === 'chat' ? setView('chat') : setView('panel', k));
+        b.addEventListener('dragstart', (e) => { _dragTab = k; b.classList.add('drag'); e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', k); } catch { /* 忽略 */ } });
+        b.addEventListener('dragend', () => { _dragTab = null; box.querySelectorAll('.drop').forEach(x => x.classList.remove('drop')); b.classList.remove('drag'); });
+        b.addEventListener('dragover', (e) => { if (_dragTab && _dragTab !== k){ e.preventDefault(); b.classList.add('drop'); } });
+        b.addEventListener('dragleave', () => b.classList.remove('drop'));
+        b.addEventListener('drop', (e) => {
+          e.preventDefault(); if (!_dragTab || _dragTab === k) return;
+          const a = getTabs().filter(x => x !== _dragTab); a.splice(a.indexOf(k), 0, _dragTab); setTabs(a);
+        });
         box.appendChild(b);
       }
+      const plus = document.createElement('button'); plus.className = 'tabplus'; plus.textContent = '+'; plus.title = '添加 / 移除 tab（拖动可排序）';
+      plus.addEventListener('click', (e) => { e.stopPropagation(); openTabMenu(plus); });
+      box.appendChild(plus);
     }
-    box.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.k === cur));
+    box.querySelectorAll('button[data-k]').forEach(b => b.classList.toggle('on', b.dataset.k === cur));
   });
+}
+function openTabMenu(anchor){
+  document.querySelectorAll('.tabmenu').forEach(m => m.remove());
+  const tabs = getTabs();
+  const m = document.createElement('div'); m.className = 'tabmenu';
+  const h = document.createElement('div'); h.className = 'tmh'; h.textContent = '显示在顶栏（拖动 tab 可排序）'; m.appendChild(h);
+  for (const k of ['chat', ...Object.keys(TAB_NAME)]){
+    const on = tabs.includes(k);
+    const o = document.createElement('button'); o.className = 'tmo' + (on ? ' on' : '');
+    o.innerHTML = '<span class="ck">' + (on ? '✓' : '') + '</span>'; o.appendChild(document.createTextNode(tabLabel(k)));
+    o.addEventListener('click', (e) => {
+      e.stopPropagation();
+      let a = getTabs();
+      if (a.includes(k)){ if (a.length <= 1) return toast('至少留一个'); a = a.filter(x => x !== k); } else a.push(k);
+      setTabs(a); openTabMenu(document.querySelector('.vtabs .tabplus'));
+    });
+    m.appendChild(o);
+  }
+  const r = document.createElement('button'); r.className = 'tmo reset'; r.textContent = '恢复默认';
+  r.addEventListener('click', (e) => { e.stopPropagation(); setTabs(TAB_DEFAULT.slice()); m.remove(); });
+  m.appendChild(r);
+  document.body.appendChild(m);
+  const rc = anchor.getBoundingClientRect();
+  m.style.left = Math.min(rc.left, innerWidth - 230) + 'px'; m.style.top = (rc.bottom + 8) + 'px';
+  setTimeout(() => document.addEventListener('click', function close(ev){ if (!m.contains(ev.target)){ m.remove(); document.removeEventListener('click', close); } }), 0);
 }
 /* 日 / 夜 / 跟随系统 */
 const THEMES = [['', 'auto', '跟随系统'], ['light', 'sun', '白天'], ['dark', 'moon', '夜间']];
@@ -954,9 +1058,10 @@ function autoScroll(){
 function buildMsg(m){
   const el = document.createElement('div');
   el.className = 'msg ' + (m.kind || 'sys') + (m.err ? ' err' : '');
+  if (m.ts && (m.kind === 'user' || m.kind === 'assistant')) el.dataset.time = fmtTime(new Date(m.ts)).slice(0, 5);
   const body = document.createElement('div'); body.className = 'body';
   if (m.kind === 'assistant'){
-    const mk = document.createElement('div'); mk.className = 'kick'; mk.textContent = '— Yours';
+    const mk = document.createElement('div'); mk.className = 'kick'; mk.textContent = '— Yours'; if (m.ts) mk.dataset.time = fmtTime(new Date(m.ts)).slice(0, 5);
     const col = document.createElement('div'); col.className = 'col';
     if (m.mode && m.mode !== 'text'){
       const md = document.createElement('div'); md.className = 'mode';
@@ -1004,6 +1109,8 @@ function lifeView(n, a, on){
   return null;
 }
 function actionView(name, a, firstStr){
+  if (name === 'nudge_checkin') return { ic:'bolt', tone:'warm', title:'约了回访 · ' + (a.afterMin || '?') + ' 分钟后', sub: String(a.message || '').slice(0, 120) };
+  if (name === 'nudge_home') return { ic:'sun', tone:'warm', title:'记下：到家了', sub:'按你的提醒规则处理' };
   const verb = {
     fs_read:['file','读取文件'], fs_write:['file','写入文件'], fs_append:['file','追加内容'], fs_patch:['file','修改文件'],
     fs_list:['folder','查看目录'], fs_grep:['search','搜索内容'], shell_run:['term','执行命令'],
@@ -1191,6 +1298,10 @@ function handleWs(m){
       toast('数据文件损坏，已自动重建'); fetchData(); break;
     case 'nudge':
       S.nudge = m; renderToday(); toast(m.title + ' · ' + (m.todos && m.todos[0] ? m.todos[0] : '')); notifySystem(m); break;
+    case 'checkin_set':
+      toast('约好了 · ' + new Date(m.checkin.dueAt).toTimeString().slice(0, 5) + ' 回来问你'); break;
+    case 'memory_learned':
+      toast('记住了：' + (m.items || [])[0] + ((m.items || []).length > 1 ? ' 等 ' + m.items.length + ' 条' : '')); if (S.v === 'panel' && S.tab === 'memory') renderPanel(); break;
     case 'nudge_snoozed':
       S.nudge = null; renderToday(); break;
     case 'audit':
@@ -1355,6 +1466,7 @@ function autoGrow(){
 }
 
 /* ---------- 数据 ---------- */
+let _weeklyTried = false;
 async function fetchData(key){
   try{
     const url = key ? '/api/data/' + encodeURIComponent(key) : '/api/data';
@@ -1365,6 +1477,7 @@ async function fetchData(key){
     else S.data = j;
     if (S.offline){ S.offline = false; toast('服务已恢复连接'); }
     renderPanel(); renderCounts();
+    if (!key && !_weeklyTried){ _weeklyTried = true; setTimeout(() => showWeekly(false), 1500); }
   }catch(e){
     // 服务不可达：标记离线 + 5 秒静默重试（恢复后自动出数据，无需刷新）
     if (!S.offline){ S.offline = true; renderPanel(); }
@@ -1559,6 +1672,41 @@ function parseConfirmArgs(c){
   if (m){ try { return JSON.parse(m[1]); } catch { /* 非 JSON */ } }
   return null;
 }
+/* 确认卡上直接改参数（热量、食物名、日期…）；只改已有字段，server 端再校验一遍 */
+const ARG_LABEL = { name:'名称', title:'标题', calories:'热量（kcal）', mealType:'餐次', amount:'数量', hours:'小时', quality:'质量 1-5', weight:'体重（kg）',
+  duration:'时长（分钟）', date:'日期', dueDate:'日期', startTime:'开始', endTime:'结束', priority:'优先级', category:'分类', note:'备注', type:'类型', atHome:'到家后提醒', afterMin:'多少分钟后', message:'到时说' };
+const ARG_OPTS = { mealType:[['breakfast','早餐'],['lunch','午餐'],['dinner','晚餐'],['snack','加餐']], priority:[['high','高'],['mid','中'],['low','低']] };
+function confirmForm(c, args){
+  const keys = Object.keys(args).filter(k => ['string','number','boolean'].includes(typeof args[k]) && !(typeof args[k] === 'string' && args[k].length > 300));
+  if (!keys.length) return null;
+  c.edits = c.edits || {};
+  const g = document.createElement('div'); g.className = 'cform';
+  for (const k of keys){
+    const v = k in c.edits ? c.edits[k] : args[k];
+    const lab = document.createElement('label'); lab.className = 'cf';
+    const sp = document.createElement('span'); sp.textContent = ARG_LABEL[k] || k; lab.appendChild(sp);
+    let el;
+    if (ARG_OPTS[k] && typeof v === 'string'){
+      el = document.createElement('select');
+      for (const [ov, on] of ARG_OPTS[k]){ const o = document.createElement('option'); o.value = ov; o.textContent = on; if (ov === v) o.selected = true; el.appendChild(o); }
+      if (!ARG_OPTS[k].some(o => o[0] === v)){ const o = document.createElement('option'); o.value = v; o.textContent = v; o.selected = true; el.appendChild(o); }
+    } else if (typeof v === 'boolean'){
+      el = document.createElement('input'); el.type = 'checkbox'; el.checked = v;
+    } else {
+      el = document.createElement('input');
+      el.type = typeof v === 'number' ? 'number' : /date$|Date$/.test(k) ? 'date' : /Time$/.test(k) ? 'time' : 'text';
+      if (typeof v === 'number') el.step = 'any';
+      el.value = v;
+    }
+    el.addEventListener('input', () => {
+      const nv = el.type === 'checkbox' ? el.checked : typeof args[k] === 'number' ? Number(el.value) : el.value;
+      if (nv === args[k] || (typeof nv === 'number' && !Number.isFinite(nv))) delete c.edits[k]; else c.edits[k] = nv;
+    });
+    el.addEventListener('change', () => el.dispatchEvent(new Event('input')));
+    lab.appendChild(el); g.appendChild(lab);
+  }
+  return g;
+}
 function buildConfirm(){
   const c = S.confirm;
   const args = parseConfirmArgs(c);
@@ -1569,19 +1717,22 @@ function buildConfirm(){
   h.innerHTML = 'One thing to confirm' + (risk ? '<span class="risk r' + risk + '">R' + risk + (risk >= 4 ? ' 危险' : risk >= 3 ? ' 写操作' : '') + '</span>' : '');
   const q = document.createElement('div'); q.className = 'q';
   if (v.life){
-    q.textContent = '记录「' + v.title + '」' + (v.val ? '（' + v.val + '）' : '') + '？';
+    q.textContent = '记录「' + v.title + '」' + (v.val ? '（' + v.val + '）' : '') + '？' + (risk < 4 ? '' : '');
   } else {
     q.textContent = v.title + (v.sub ? ' ' : '');
     if (v.sub){ const code = document.createElement('code'); code.textContent = v.sub; q.appendChild(code); }
     q.appendChild(document.createTextNode('？'));
   }
-  const cmd = document.createElement('div'); cmd.className = 'cmd';
-  if (args && typeof args.content === 'string'){
+  const form = (risk < 4 && args && typeof args === 'object') ? confirmForm(c, args) : null;
+  const cmd = document.createElement(form ? 'details' : 'div'); cmd.className = 'cmd' + (form ? ' raw' : '');
+  if (form){ const sm = document.createElement('summary'); sm.textContent = '原始参数'; cmd.appendChild(sm); }
+  if (form) { const pre = document.createElement('div'); pre.textContent = JSON.stringify(args, null, 2); cmd.appendChild(pre); }
+  else if (args && typeof args.content === 'string'){
     cmd.textContent = args.content.length > 1500 ? args.content.slice(0, 1500) + '\n…（共 ' + args.content.length + ' 字）' : args.content;
   } else {
     cmd.textContent = args ? JSON.stringify(args, null, 2) : (c.prompt || '');
   }
-  el.appendChild(h); el.appendChild(q); el.appendChild(cmd);
+  el.appendChild(h); el.appendChild(q); if (form) el.appendChild(form); el.appendChild(cmd);
   if (risk >= 4){ const n = document.createElement('div'); n.className = 'note'; n.textContent = '危险操作：每次都会单独询问，不能设为总是允许'; el.appendChild(n); }
   const btns = document.createElement('div'); btns.className = 'btns';
   const tm = document.createElement('span'); tm.className = 'tm'; tm.id = 'confLeft'; tm.textContent = S.confirmLeft + ' 秒后自动拒绝';
@@ -1608,7 +1759,7 @@ function answerConfirm(ok, always){
   clearInterval(S.confirmTimer);
   fetch('/api/confirm', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ id: c.id, ok, always: !!always, tool: c.tool }),
+    body: JSON.stringify({ id: c.id, ok, always: !!always, tool: c.tool, args: ok && c.edits && Object.keys(c.edits).length ? c.edits : undefined }),
   }).catch(()=>{});
   S.confirm = null; renderConfirm();
 }
@@ -1635,7 +1786,10 @@ function renderPanel(){
     w.innerHTML = '<b>服务未连接</b><br>正在自动重试…<br><small>可运行：<code>node paa/server/main.ts</code></small>';
     body.appendChild(w); return;
   }
-  const renderers = { schedule: pSchedule, fitness: pFitness, wellness: pWellness, finance: pFinance, todos: pTodos, goals: pGoals, memory: pMemory, tasks: pTasks, settings: pSettings };
+  // 身体 = 健身 + 原养生（睡眠/拉伸/饮水等，放在下面）
+  const pBody = (d) => { const f = pFitness(d); f.appendChild(pWellness(d)); return f; };
+  if (S.tab === 'wellness') S.tab = 'fitness';
+  const renderers = { schedule: pSchedule, fitness: pBody, wellness: pBody, finance: pFinance, todos: pTodos, goals: pGoals, memory: pMemory, tasks: pTasks, settings: pSettings };
   const fn = renderers[S.tab] || pSchedule;
   body.appendChild(pt);
   body.appendChild(fn(S.data || {}));
@@ -2231,12 +2385,34 @@ function pGoals(d){
     const sugN = (d.todos || []).filter(x => isSug(x) && !x.done && x.goalId === g.id && x.dueDate >= todayStr()).length;
     const pb = document.createElement('div'); pb.className = 'goalplan';
     const pbtn = document.createElement('button'); pbtn.className = 'btn';
-    pbtn.textContent = sugN ? '重新拆解' : '拆解到每天';
-    pbtn.title = '和 Yours 一起把这个目标拆成这周每天的参考计划';
+    pbtn.textContent = sugN ? '和 Yours 调整计划' : '和 Yours 聊聊怎么推进';
+    pbtn.title = '先聊进度和这周的时间，再拆成每天的建议';
     pbtn.addEventListener('click', () => planGoal(g));
     const pn = document.createElement('span'); pn.className = 'chip';
     pn.textContent = sugN ? ('已有 ' + sugN + ' 条建议 · 在「今天」里挑') : '还没拆解';
     pb.appendChild(pbtn); pb.appendChild(pn); c.appendChild(pb);
+    const gl = (d.todos || []).filter(x => x.goalId === g.id && !x.done && (isSug(x) ? (x.dueDate || '') >= todayStr() : true))
+      .sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''));
+    if (gl.length){
+      const box = document.createElement('div'); box.className = 'gplan';
+      for (const x of gl.slice(0, 8)){
+        const r = document.createElement('div'); r.className = 'gp' + (isSug(x) ? ' sug' : '');
+        const dd = document.createElement('span'); dd.className = 'due'; dd.textContent = x.dueDate === todayStr() ? '今天' : (x.dueDate || '').slice(5);
+        const tt = document.createElement('span'); tt.className = 'tt'; tt.textContent = x.title;
+        r.append(dd, tt);
+        if (isSug(x)){
+          const add = document.createElement('button'); add.className = 'addbtn'; add.textContent = '+'; add.title = '加入计划';
+          add.addEventListener('click', () => todoPatch(x.id, { plan:'committed' }, '已加入 · ' + x.title));
+          const del = document.createElement('button'); del.className = 'del'; del.textContent = '×'; del.title = '不要这条';
+          del.addEventListener('click', () => todoDrop(x.id));
+          r.append(add, del);
+        } else {
+          const tag = document.createElement('span'); tag.className = 'chip'; tag.textContent = '已加入'; r.append(tag);
+        }
+        box.appendChild(r);
+      }
+      c.appendChild(box);
+    }
     const gp = goalProgress(d, g);
     if (gp){
       const pc = document.createElement('div'); pc.style.cssText='margin-top:8px';
@@ -2309,7 +2485,8 @@ async function snoozeNudge(){
 }
 function planGoal(g){
   setView('chat');
-  $('#input').value = '帮我把目标「' + (g.title || '') + '」（id: ' + g.id + '）拆成这周每天的参考计划：先看看我现在的待办和日程，每天 1–3 件、具体到动作，用 suggest_plan 一次写入。';
+  const has = (S.data.todos || []).some(x => x.goalId === g.id && isSug(x) && !x.done);
+  $('#input').value = '我想' + (has ? '调整' : '推进') + '目标「' + (g.title || '') + '」（id: ' + g.id + '）。先问我现在的进度、这周大概有多少时间、卡在哪；聊清楚之后再拆成这周每天的建议（每天 1–3 件、具体到动作，用 suggest_plan 写入）。';
   send();
 }
 function notifySystem(m){
@@ -2317,6 +2494,38 @@ function notifySystem(m){
     if (!('Notification' in window) || Notification.permission !== 'granted' || !document.hidden) return;
     new Notification(m.title || 'Yours', { body: m.body || '', icon: '/icons/icon-192.png', tag: 'yours-nudge' });
   } catch { /* 忽略 */ }
+}
+
+/* ---------- 周复盘：每周第一次打开时，在对话里放一张卡 ---------- */
+function reviewDay(){ try { const v = Number(localStorage.getItem('paaReviewDay') ?? '1'); return v >= 0 && v <= 6 ? v : 1; } catch { return 1; } }
+function weekKey(){ const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() - reviewDay() + 7) % 7)); return fmtD(d); }
+async function showWeekly(force){
+  const k = weekKey();
+  let seen = ''; try { seen = localStorage.getItem('paaWeekly') || ''; } catch { /* 忽略 */ }
+  if (!force && (seen === k || !((S.data || {}).goals || []).some(g => g.status !== 'done'))) return;
+  if (S.msgs.some(m => m.kind === 'weekly')) return;
+  try {
+    const w = await (await fetch('/api/weekly')).json();
+    try { localStorage.setItem('paaWeekly', k); } catch { /* 忽略 */ }
+    S.msgs.push({ kind:'weekly', data: w, ts: Date.now() }); renderStream(); autoScroll();
+  } catch { /* 忽略 */ }
+}
+function buildWeekly(m){
+  const w = m.data || {}; const lw = w.lastWeek || {};
+  const el = document.createElement('div'); el.className = 'weekly';
+  const pct = lw.rate == null ? '' : Math.round(lw.rate * 100) + '%';
+  let h = '<div class="wk">— Weekly</div><div class="wt">新的一周。' + (lw.committed ? '上周你承诺了 ' + lw.committed + ' 件，完成 ' + lw.done + ' 件（' + pct + '）。' : '上周没有承诺的事。') + '</div>';
+  h += '<div class="wrows">' + (w.goals || []).map(g => '<div class="wr"><b>' + esc(g.title) + '</b><span>上周 ' + g.lastWeek.done + '/' + g.lastWeek.committed + '</span><span>本周已有建议 ' + g.thisWeek.suggested + '</span></div>').join('') + '</div>';
+  h += '<div class="wb"><button class="btn primary sm" data-wk-go>让 Yours 给本周建议</button><button class="linkbtn" data-wk-skip>这周先不用</button></div>';
+  el.innerHTML = h;
+  el.querySelector('[data-wk-go]').addEventListener('click', () => {
+    const gs = (w.goals || []).map(g => '目标「' + g.title + '」（id: ' + g.goalId + '）上周 ' + g.lastWeek.done + '/' + g.lastWeek.committed).join('；');
+    S.msgs = S.msgs.filter(x => x !== m);
+    $('#input').value = '新的一周，给我本周建议。上周承诺完成 ' + (lw.done || 0) + '/' + (lw.committed || 0) + '。' + gs + '。先用两三句点评上周（做得好的、卡住的），再给每个目标拆出这周 2–3 件建议（用 suggest_plan 按目标分别写入），最后问我哪些要加入本周。';
+    send();
+  });
+  el.querySelector('[data-wk-skip]').addEventListener('click', () => { S.msgs = S.msgs.filter(x => x !== m); renderStream(); });
+  return el;
 }
 
 /* ---------- 设置：到家提醒（规则全由用户定，默认关闭） ---------- */
@@ -2340,6 +2549,11 @@ function nudgeCard(){
     const ivw = document.createElement('div'); ivw.className = 'swatches'; ivw.append(iv, Object.assign(document.createElement('span'), { className:'chip', textContent:'分钟一次，最多' }), mx, Object.assign(document.createElement('span'), { className:'chip', textContent:'次' }));
     line('跟进节奏', '温和档只发一次', ivw);
     line('提醒哪些', '今天没做完的承诺；或只提醒标了 ⌂ 的', segWrap([['all','全部承诺'], ['atHome','只提醒 ⌂']], cfg.scope, (k) => { cfg.scope = k; }));
+    const hd = num(cfg.homeDelayMin, 0, 120);
+    const hdw = document.createElement('div'); hdw.className = 'swatches'; hdw.append(hd, Object.assign(document.createElement('span'), { className:'chip', textContent:'分钟后再问' }));
+    line('到家缓冲', '到家后先歇一会儿；0 = 立刻', hdw);
+    const ev = tm(cfg.eveningAt || '');
+    line('晚间检查', '到这个时间还有没做完的承诺，就问一句（留空 = 不检查）', ev);
     const qs = tm(cfg.quietStart), qe = tm(cfg.quietEnd);
     const qw = document.createElement('div'); qw.className = 'swatches'; qw.append(qs, Object.assign(document.createElement('span'), { className:'chip', textContent:'到' }), qe);
     line('安静时段', '这段时间不发任何提醒', qw);
@@ -2358,7 +2572,7 @@ function nudgeCard(){
     const perm = document.createElement('button'); perm.className = 'btn ghost'; perm.textContent = '允许浏览器通知';
     if (!('Notification' in window) || Notification.permission === 'granted') perm.style.display = 'none';
     btns.append(save, test, perm); c.appendChild(btns);
-    const collect = () => Object.assign(cfg, { intervalMin: +iv.value, maxCount: +mx.value, quietStart: qs.value, quietEnd: qe.value, channel: { type: chSel.value, url: url.value.trim() } });
+    const collect = () => Object.assign(cfg, { homeDelayMin: +hd.value, eveningAt: ev.value || '', intervalMin: +iv.value, maxCount: +mx.value, quietStart: qs.value, quietEnd: qe.value, channel: { type: chSel.value, url: url.value.trim() } });
     save.addEventListener('click', async () => {
       collect();
       try {
@@ -2435,13 +2649,13 @@ function pTodos(d){
   }
   f.appendChild(c);
   if (sugs.length){
-    const cs = card('建议', '参考计划，不提醒 · 点「做」才算数');
+    const cs = card('建议', '参考计划，不提醒 · 点 + 加入才算数');
     for (const x of sugs.slice(0, 30)){
       const r = document.createElement('div'); r.className='todo-row sug';
       const dd = document.createElement('span'); dd.className='due'; dd.textContent = x.dueDate === todayStr() ? '今天' : (x.dueDate||'').slice(5);
       const tt = document.createElement('span'); tt.className='tt'; tt.textContent = x.title;
-      const go = document.createElement('button'); go.className='btn sm'; go.textContent='做';
-      go.title = '变成承诺（日期不变）';
+      const go = document.createElement('button'); go.className='addbtn'; go.textContent='+';
+      go.title = '加入计划（变成承诺，日期不变）';
       go.addEventListener('click', () => todoPatch(x.id, { plan:'committed' }, '已承诺 · ' + x.title));
       const del = document.createElement('button'); del.className='del'; del.textContent='×'; del.title='不要这条';
       del.addEventListener('click', () => todoDrop(x.id));
@@ -2632,18 +2846,50 @@ function pTasks(d){
 }
 
 /* ---------- 面板：记忆 ---------- */
+const MEM_GROUP = [['preference', '偏好'], ['fact', '事实与习惯'], ['persona', '画像'], ['episodic', '经历'], ['skill-note', '其他']];
 function pMemory(d){
   const f = document.createDocumentFragment();
-  const c = card('记忆系统', '文件即记忆');
-  row(c, '固化文件', 'MEMORY.md · goals.md · daily log', 'cool');
-  row(c, '启动注入', '每次会话自动载入', 'cool');
-  row(c, '检索工具', 'memory__search（对话内可用）', 'cool');
-  f.appendChild(c);
-  const c2 = card('如何使用');
-  const p = document.createElement('div'); p.className='body';
-  p.appendChild(mdToDom('对 Yours 说以下任意一种，即可**固化记忆**：\n- 「记住：我每周三晚上有健身课」\n- 「以后看到 恒大 相关新闻，提醒我 AIG 框架的差异」\n- 「把我的减重目标设为长期目标」\n\n记忆会写入 Node 侧 JSON 文件，**不随页面刷新丢失**。'));
-  c2.appendChild(p);
-  f.appendChild(c2);
+  const intro = document.createElement('div'); intro.className = 'actbar';
+  const add = document.createElement('button'); add.className = 'btn primary'; add.textContent = '＋ 告诉它一件关于你的事';
+  add.addEventListener('click', () => openModal('告诉 Yours', [
+    { key:'content', label:'一句话（第三人称更好，如：用户一到家就容易躺平）', type:'textarea' },
+    { key:'type', label:'类型', type:'select', options:[['fact','事实 / 习惯'], ['preference','偏好']], value:'fact' },
+  ], async (o) => {
+    if (!o.content || !o.content.trim()) return toast('写点什么');
+    const r = await fetch('/api/memory', { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(o) });
+    if (r.ok){ toast('记住了'); renderPanel(); } else toast('失败');
+  }));
+  const tip = document.createElement('span'); tip.className = 'chip'; tip.textContent = '它会在对话里自己记，也会每聊几轮整理一次；这里可以看、改、删';
+  intro.append(add, tip); f.appendChild(intro);
+  const holder = document.createElement('div'); holder.innerHTML = '<div class="empty">读取中…</div>'; f.appendChild(holder);
+  fetch('/api/memory').then(r => r.json()).then(j => {
+    holder.textContent = '';
+    const recs = j.records || [];
+    if (!recs.length){ holder.appendChild(emptyBox('它还不了解你<br>多聊几句，或者点上面直接告诉它')); return; }
+    for (const [type, name] of MEM_GROUP){
+      const list = recs.filter(r => r.type === type).sort((a, b) => b.updatedAt - a.updatedAt);
+      if (!list.length) continue;
+      const c = card(name, list.length + ' 条');
+      for (const r of list){
+        const row = document.createElement('div'); row.className = 'memrow';
+        const tx = document.createElement('span'); tx.className = 'mt'; tx.textContent = r.content;
+        const src = document.createElement('span'); src.className = 'chip'; src.textContent = r.source === 'user' ? '你写的' : r.source === 'import' ? '导入' : (r.tags || []).includes('auto') ? '它整理的' : '它记的';
+        const ed = document.createElement('button'); ed.className = 'iconbtn'; ed.textContent = '✎'; ed.title = '修改';
+        ed.addEventListener('click', () => openModal('修改这条', [{ key:'content', label:'内容', type:'textarea', value: r.content }], async (o) => {
+          const rr = await fetch('/api/memory/' + encodeURIComponent(r.id), { method:'PUT', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ content: o.content }) });
+          if (rr.ok){ toast('改好了'); renderPanel(); } else toast('失败');
+        }));
+        const del = document.createElement('button'); del.className = 'iconbtn'; del.textContent = '×'; del.title = '忘掉';
+        del.addEventListener('click', async () => {
+          if (!confirm('让它忘掉这条？')) return;
+          const rr = await fetch('/api/memory/' + encodeURIComponent(r.id), { method:'DELETE' });
+          if (rr.ok){ toast('已忘掉'); renderPanel(); } else toast('失败');
+        });
+        row.append(tx, src, ed, del); c.appendChild(row);
+      }
+      holder.appendChild(c);
+    }
+  }).catch(() => { holder.innerHTML = '<div class="empty">读取失败</div>'; });
   return f;
 }
 
@@ -2659,7 +2905,14 @@ function pSettings(d){
   const sel = document.createElement('select');
   for (const c of CURRENCIES){ const o = document.createElement('option'); o.value = c; o.textContent = c; if (c === CUR()) o.selected = true; sel.appendChild(o); }
   sel.addEventListener('change', () => setCurrency(sel.value));
-  sc.appendChild(sel); ca.appendChild(sc); f.appendChild(ca);
+  sc.appendChild(sel); ca.appendChild(sc);
+  const sr = document.createElement('div'); sr.className = 'set';
+  sr.innerHTML = '<div class="lab"><b>周复盘</b><span>每周这天第一次打开时，在对话里放一张复盘卡</span></div>';
+  const rsel = document.createElement('select');
+  ['周日','周一','周二','周三','周四','周五','周六'].forEach((n, i) => { const o = document.createElement('option'); o.value = i; o.textContent = n; if (i === reviewDay()) o.selected = true; rsel.appendChild(o); });
+  rsel.addEventListener('change', () => { try { localStorage.setItem('paaReviewDay', rsel.value); } catch { /* 忽略 */ } toast('周复盘改到' + rsel.selectedOptions[0].textContent); });
+  sr.appendChild(rsel); ca.appendChild(sr);
+  f.appendChild(ca);
   f.appendChild(nudgeCard());
   const c = card('自治级别 Autonomy', '每工具 risk 取 min 下限');
   const set = document.createElement('div');
@@ -2773,18 +3026,19 @@ function renderToday(){
   h += due.length ? due.slice(0, 7).map(x => '<div class="ttodo"><span class="cb" data-done="' + idxOf(x) + '" title="完成"></span><span class="tt">' + esc(x.title) + '</span>' +
     (x.atHome ? '<span class="p home" title="到家后提醒">⌂</span>' : '') +
     (x.dueDate && x.dueDate < t ? '<span class="p late">逾期</span>' : '<span class="p ' + esc(x.priority || '') + '">' + esc(PR_LABEL[x.priority] || '') + '</span>') + '</div>').join('')
-    : '<div class="tempty">' + (allTodos.some(x => isSug(x) && !x.done && x.dueDate === t) ? '还没定今天做什么——从下面的建议里挑一两件。' : 'All clear.') + '</div>';
+    : '<div class="tempty">' + (allTodos.some(x => isSug(x) && !x.done && x.dueDate === t) ? '还没定今天做什么——从下面的建议里点 + 挑一两件。' : 'All clear.') + '</div>';
   if (late.length || (due.length && hr >= 20)) h += '<button class="linkbtn" data-roll>没做完的挪到明天 →</button>';
   h += '</div>';
   const sug = suggestedOn(d, t);
   if (sug.length){
     h += '<div class="tsec"><h5>Suggested<a data-go="todos">' + sug.length + ' 条</a></h5>';
-    h += sug.slice(0, 4).map(x => '<div class="tsug"><span class="tt">' + esc(x.title) + '</span><button class="btn sm" data-commit="' + esc(x.id) + '">今天做</button><button class="del" data-drop="' + esc(x.id) + '" title="不要这条">×</button></div>').join('');
+    h += sug.slice(0, 4).map(x => '<div class="tsug"><span class="tt">' + esc(x.title) + '</span><button class="addbtn" data-commit="' + esc(x.id) + '" title="加入今天">+</button><button class="del" data-drop="' + esc(x.id) + '" title="不要这条">×</button></div>').join('');
     h += '</div>';
   }
   h += '<div class="bento">' +
     tile('tall', 'cv-sleep', 'wellness', sleep ? String(sleep.hours) : '—', 'h', '睡眠', sleep ? (sleep.quality ? '质量 ' + esc(sleep.quality) : 'last night') : 'not logged') +
-    tile('', 'cv-water', 'wellness', water ? (water / 1000).toFixed(1) : '—', 'L', '饮水', 'of ' + (waterT / 1000).toFixed(1) + ' L', water / waterT) +
+    (() => { const ct = (d.todos || []).filter(x => !isSug(x) && x.dueDate === t); const cd = ct.filter(x => x.done).length;
+      return tile('', 'cv-water', 'todos', ct.length ? cd + '/' + ct.length : '—', '', '今天的承诺', ct.length ? (cd === ct.length ? 'all done' : (ct.length - cd) + ' to go') : 'pick from suggestions', ct.length ? cd / ct.length : 0); })() +
     tile('', 'cv-kcal', 'fitness', kcal ? kcal.toLocaleString() : '—', 'kcal', '热量', 'of ' + kcalT.toLocaleString(), kcal / kcalT) +
     tile('', 'cv-money', 'finance', spent ? CUR() + spent.toFixed(0) : '—', '', '支出', budget ? 'of ' + CUR() + budget : 'today', budget ? spent / budget : null) +
     tile('', 'cv-next', 'schedule', nx ? esc(nx.startTime || '全天') : '—', '', nx ? esc(nx.title || '') : '日程', nx ? 'next' : 'nothing left') +
@@ -2816,7 +3070,7 @@ function sayDraft(text){
 }
 
 /* ---------- ⌘K 命令面板 ---------- */
-const TAB_ICON = { schedule:'cal', todos:'check', finance:'wallet', fitness:'dumbbell', wellness:'leaf', goals:'target', memory:'bulb', tasks:'tree', settings:'gear' };
+const TAB_ICON = { chat:'chat', schedule:'cal', todos:'check', finance:'wallet', fitness:'dumbbell', wellness:'leaf', goals:'target', memory:'bulb', tasks:'tree', settings:'gear' };
 function palItems(q){
   const items = [];
   const add = (grp, icon, label, hint, run) => items.push({ grp, icon, label, hint, run });
@@ -2828,6 +3082,7 @@ function palItems(q){
   add('操作', 'sun', '我到家了', '记下到家，按规则提醒', () => arriveHome());
   add('操作', 'moon', '今天算了', '今天不再提醒', () => snoozeNudge());
   add('操作', 'list', '没做完的挪到明天', '', () => rollOver());
+  add('操作', 'target', '周复盘', '看上周完成度，要本周建议', () => { setView('chat'); showWeekly(true); });
   for (const [k, ic, n] of THEMES) add('操作', ic, '外观：' + n, curTheme() === k ? '当前' : '', () => setTheme(k));
   const ql = q.trim().toLowerCase();
   const hit = ql ? items.filter(it => (it.label + ' ' + it.hint).toLowerCase().includes(ql)) : items.filter(it => it.grp !== '会话' || (S.sessions || []).indexOf(it) < 5);

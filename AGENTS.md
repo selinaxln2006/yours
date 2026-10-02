@@ -43,7 +43,10 @@ paa/                        # PAA 大脑层（TS ESM，Node 24 直接跑 .ts，�
 ├── server/                 # 宿主 2：console server（127.0.0.1:18765）
 │   ├── main.ts             # HTTP 静态+REST+WS+chat
 │   ├── request-guard.ts    # 来源门禁（Origin/Host 校验、LAN 令牌）——改 server 路由别绕过它
-│   ├── nudge.ts            # 到家提醒：规则判断（纯函数）+ 定时 + 推送（ntfy/Bark/webhook）
+│   ├── nudge.ts            # 约束提醒：到家 / 晚间检查 / 对话回访；规则判断（纯函数）+ 定时 + 推送
+│   ├── weekly.ts           # 周复盘统计 + 每轮注入给模型的「现状」
+│   ├── memory-extract.ts   # 每 3 轮对话后台整理长期记忆
+│   ├── confirm-edit.ts     # 确认卡改参数的校验（只改已有字段、类型不变）
 │   ├── mcp.ts              # server 侧 MCP 接入：按 annotations 定风险 + 日历读取（/api/calendar）
 │   └── demo-calendar.mjs   # 演示/测试用的假日历 MCP server
 ├── tools/                  # 内置工具组（注入到 pipeline）

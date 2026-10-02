@@ -184,7 +184,7 @@ export class DemoAdapter implements LLMAdapter {
       if (called('nudge_home') && done) return { role: 'assistant', content: '欢迎回来。先缓一会儿，过一阵我来问问今天剩下的事。' };
       const planned = called('life_suggest_plan');
       const lines = [planned && done
-        ? '放好了：未来 5 天每天一件，都标成「建议」。打开「今天」，把今天想做的点「今天做」——只有你点过的才会提醒。'
+        ? '放好了：未来 5 天每天一件，都标成「建议」。在「今天」或目标卡里点 + 挑这周要做的——只有你加入的才会提醒。'
         : done ? `记好了 ✅ 共 ${done} 项，「今天」已经更新。` : '这次什么都没记下。'];
       if (failed.length) lines.push(`有 ${failed.length} 项没执行（被拒绝或失败），需要的话换个说法再试。`);
       return { role: 'assistant', content: lines.join('\n') };

@@ -40,6 +40,7 @@ import { checkRequestSource, generateAccessToken, redactSearch, tokenMatches } f
 import { DemoAdapter, seedDemoData } from './demo.ts';
 import { turnMessages } from './turn.ts';
 import { NudgeEngine } from './nudge.ts';
+import { applyEdits } from './confirm-edit.ts';
 import { weeklyStats, buildContext } from './weekly.ts';
 import { extractMemories } from './memory-extract.ts';
 import {
@@ -253,6 +254,8 @@ interface PendingConfirm {
   timer: ReturnType<typeof setTimeout>;
   /** 发起确认的工具名（"总是允许"以此为准，不信任客户端回传的 tool 字段） */
   tool?: string;
+  /** 工具调用参数（同一个对象引用：确认时改了它，执行的就是改过的值） */
+  args?: Record<string, unknown>;
 }
 const pendingConfirms = new Map<string, PendingConfirm>();
 /** 会话级放行（所有连接共享；单用户本地场景） */
@@ -267,7 +270,7 @@ function broadcast(obj: unknown): void {
 const CONFIRM_TIMEOUT_MS = 60_000;
 
 /** ctx.ask 实现：推确认卡到控制台，等待应答；超时/无连接 = 拒绝 */
-function askOverWs(prompt: string, toolName?: string): Promise<boolean> {
+function askOverWs(prompt: string, toolName?: string, args?: Record<string, unknown>): Promise<boolean> {
   if (toolName && trustedTools.has(toolName)) return Promise.resolve(true);
   const id = randomUUID().slice(0, 8);
   return new Promise((resolve) => {
@@ -276,8 +279,8 @@ function askOverWs(prompt: string, toolName?: string): Promise<boolean> {
       broadcast({ type: 'confirm_timeout', id });
       resolve(false);
     }, CONFIRM_TIMEOUT_MS);
-    pendingConfirms.set(id, { resolve, timer, tool: toolName });
-    broadcast({ type: 'confirm', id, tool: toolName ?? '?', prompt, connections: connections.size });
+    pendingConfirms.set(id, { resolve, timer, tool: toolName, args });
+    broadcast({ type: 'confirm', id, tool: toolName ?? '?', prompt, args, connections: connections.size });
     if (connections.size === 0) {
       // 没有控制台连着：直接拒绝（安全默认）
       clearTimeout(timer);
@@ -288,11 +291,16 @@ function askOverWs(prompt: string, toolName?: string): Promise<boolean> {
 }
 
 /** 应答一张确认卡（WS 消息与 POST /api/confirm 共用）。返回是否找到对应的待确认项 */
-function answerConfirm(id: string, ok: boolean, always: boolean): boolean {
+function answerConfirm(id: string, ok: boolean, always: boolean, edits?: unknown): boolean {
   const p = pendingConfirms.get(id);
   if (!p) return false;
   pendingConfirms.delete(id);
   clearTimeout(p.timer);
+  // 允许时可以顺手改参数（危险工具除外）：只改已有字段、类型不变
+  if (ok && edits && p.args && p.tool && isTrustable(p.tool)) {
+    const { changed } = applyEdits(p.args, edits);
+    if (changed.length) console.log(`[confirm] ${p.tool} 用户修改了 ${changed.join(', ')}`);
+  }
   if (ok && always && p.tool && isTrustable(p.tool)) {
     trustedTools.add(p.tool);
     broadcast({ type: 'trusted', tool: p.tool });
@@ -304,7 +312,7 @@ function answerConfirm(id: string, ok: boolean, always: boolean): boolean {
 
 function handleWsMessage(conn: WsConnection, msg: WsMessage): void {
   if (msg.type === 'confirm' && typeof msg.id === 'string') {
-    answerConfirm(msg.id, msg.ok === true, msg.always === true);
+    answerConfirm(msg.id, msg.ok === true, msg.always === true, (msg as { args?: unknown }).args);
     return;
   }
   if (msg.type === 'ping') {
@@ -1417,12 +1425,12 @@ async function main(): Promise<void> {
 
       // ---- REST：确认卡应答（console.html 的"允许/拒绝/总是允许"按钮走这里）----
       if (p === '/api/confirm' && req.method === 'POST') {
-        const body = JSON.parse((await readBody(req)).toString('utf8')) as { id?: unknown; ok?: unknown; always?: unknown };
+        const body = JSON.parse((await readBody(req)).toString('utf8')) as { id?: unknown; ok?: unknown; always?: unknown; args?: unknown };
         if (typeof body.id !== 'string') {
           sendJson(res, 400, { error: 'id 必填' });
           return;
         }
-        const found = answerConfirm(body.id, body.ok === true, body.always === true);
+        const found = answerConfirm(body.id, body.ok === true, body.always === true, body.args);
         sendJson(res, found ? 200 : 404, found ? { ok: true } : { error: '确认已超时或不存在' });
         return;
       }

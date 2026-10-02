@@ -157,13 +157,20 @@ export class LifeStore extends EventEmitter {
     return path.join(this.dir, `${key}.json`);
   }
 
-  /** 原子写：tmp → rename */
-  private async persist(key: string): Promise<void> {
-    const file = this.fileOf(key);
-    const tmp = file + '.tmp';
-    const value = this.cache.get(key);
-    await writeFile(tmp, JSON.stringify(value, null, 2), 'utf8');
-    await rename(tmp, file);
+  /** 同一个键的写入排队：并发 tx（如模型并行调了两个工具）不会抢同一个 tmp 文件 */
+  private writeChain = new Map<string, Promise<void>>();
+
+  /** 原子写：tmp → rename；按键串行，写的永远是当时缓存里的最新值 */
+  private persist(key: string): Promise<void> {
+    const prev = this.writeChain.get(key) ?? Promise.resolve();
+    const next = prev.catch(() => {}).then(async () => {
+      const file = this.fileOf(key);
+      const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2, 8)}.tmp`;
+      await writeFile(tmp, JSON.stringify(this.cache.get(key), null, 2), 'utf8');
+      await rename(tmp, file);
+    });
+    this.writeChain.set(key, next);
+    return next;
   }
 
   /** 读单键（内存缓存，init 后零 IO） */
