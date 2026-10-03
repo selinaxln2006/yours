@@ -260,10 +260,10 @@ export async function seedDemoAssets(store: AssetsStore): Promise<void> {
   };
   const m = (k: number): string => { const d = new Date(); d.setMonth(d.getMonth() - k); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
   store.data.snapshots = [
-    { month: m(4), date: `${m(4)}-28`, base: 'SGD', total: 48200, byKind: {} },
-    { month: m(3), date: `${m(3)}-28`, base: 'SGD', total: 49650, byKind: {} },
-    { month: m(2), date: `${m(2)}-28`, base: 'SGD', total: 51100, byKind: {} },
-    { month: m(1), date: `${m(1)}-28`, base: 'SGD', total: 50380, byKind: {} },
+    { month: m(4), date: `${m(4)}-28`, base: 'SGD', total: 30120, byKind: {} },
+    { month: m(3), date: `${m(3)}-28`, base: 'SGD', total: 31480, byKind: {} },
+    { month: m(2), date: `${m(2)}-28`, base: 'SGD', total: 32950, byKind: {} },
+    { month: m(1), date: `${m(1)}-28`, base: 'SGD', total: 32610, byKind: {} },
   ];
   await store.save();
 }

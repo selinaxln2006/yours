@@ -40,7 +40,7 @@ import { checkRequestSource, generateAccessToken, redactSearch, tokenMatches } f
 import { DemoAdapter, seedDemoData } from './demo.ts';
 import { turnMessages } from './turn.ts';
 import { NudgeEngine } from './nudge.ts';
-import { AssetsStore, normalizeAccount, maturing, type Account } from './assets.ts';
+import { AssetsStore, normalizeAccount, maturing, convert, type Account } from './assets.ts';
 import { fetchIbkr, fetchMoomoo, mergeBroker } from './asset-connectors.ts';
 import { seedDemoAssets } from './demo.ts';
 import { applyEdits } from './confirm-edit.ts';
@@ -1078,7 +1078,8 @@ async function main(): Promise<void> {
         baseCurrency: assets.data.baseCurrency,
         accounts: assets.data.accounts,
         valuation: await assets.valuation(new Date()),
-        snapshots: assets.data.snapshots,
+        // 快照按当时主币种存；显示时按今天汇率折成当前主币种（近似）
+        snapshots: assets.data.snapshots.map((s) => ({ ...s, shown: s.base === assets.data.baseCurrency ? s.total : convert(s.total, s.base, assets.data.baseCurrency, assets.data.fx) })),
         maturing: maturing(assets.data.accounts, new Date()),
         connectors: { ...assets.connectorView(), moomooServers: mcp.clients.filter((c) => c.tools.some((x) => x.name === 'get_positions')).map((c) => c.name) },
         ...extra,

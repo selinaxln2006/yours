@@ -479,6 +479,15 @@ html[data-theme="dark"] .tile .cover{opacity:.9}
 .ttodo .p{font:italic 12.5px var(--serif-en);color:var(--ink3)}
 .ttodo .p.high{color:var(--clay)}
 .homebar{display:flex;gap:8px}
+.astop{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;margin-bottom:12px}
+.astot{flex:1;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.astot .lab{font:italic 14px var(--serif-en);color:var(--ink3)}
+.astot b{font:500 40px/1.1 var(--serif-en);color:var(--ink)}
+.chip.warn{color:var(--err)}
+.prow.hold .l{font-size:13px;flex:1}
+.prow.hold .r{margin-left:auto}
+.prow.hold .del{opacity:.5;border:none;background:none;color:var(--ink3);cursor:pointer;margin-left:6px}
+.prow.hold .del:hover{opacity:1;color:var(--err)}
 .cform{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin:2px 0 12px}
 .cform .cf{display:flex;flex-direction:column;gap:4px}
 .cform .cf span{font:italic 12.5px var(--serif-en);color:var(--ink3)}
@@ -675,6 +684,7 @@ details.cmd.raw div{white-space:pre-wrap;margin-top:6px}
       <button class="nav" data-tab="schedule"><svg class="i"><use href="#i-cal"/></svg>日程<span class="c" id="c-schedule"></span></button>
       <button class="nav" data-tab="todos"><svg class="i"><use href="#i-check"/></svg>待办<span class="c" id="c-todos"></span></button>
       <button class="nav" data-tab="finance"><svg class="i"><use href="#i-wallet"/></svg>记账</button>
+      <button class="nav" data-tab="assets"><svg class="i"><use href="#i-cube"/></svg>资产</button>
       <button class="nav" data-tab="fitness"><svg class="i"><use href="#i-dumbbell"/></svg>身体</button>
       <button class="nav" data-tab="goals"><svg class="i"><use href="#i-target"/></svg>目标</button>
     </div>
@@ -932,12 +942,12 @@ function pushMsg(m){
 function caretEl(){ const c = document.createElement('span'); c.className = 'caret'; return c; }
 function chatVisible(){ return $('#chatView').offsetParent !== null; }
 /* ---------- 视图：today / chat / panel（S.tab） ---------- */
-const TAB_NAME = { schedule:'日程', todos:'待办', finance:'记账', fitness:'身体', goals:'目标', memory:'它眼中的你', tasks:'任务树', settings:'设置' };
-const LIFE_TABS = ['schedule','todos','finance','fitness','goals'];
-const TAB_EN = { schedule:'Schedule', todos:'To do', finance:'Money', fitness:'Body', goals:'Goals', memory:'Memory', tasks:'Task tree', settings:'Settings' };
+const TAB_NAME = { schedule:'日程', todos:'待办', finance:'记账', assets:'资产', fitness:'身体', goals:'目标', memory:'它眼中的你', tasks:'任务树', settings:'设置' };
+const LIFE_TABS = ['schedule','todos','finance','assets','fitness','goals'];
+const TAB_EN = { schedule:'Schedule', todos:'To do', finance:'Money', assets:'Assets', fitness:'Body', goals:'Goals', memory:'Memory', tasks:'Task tree', settings:'Settings' };
 /* 顶部立体 tab：对话 + 三个最常用面板（其余在侧栏 / ⌘K） */
 /* 顶部 tab：可拖拽排序，「+」增删；顺序只存在这台设备 */
-const TAB_SW = { chat:'', schedule:'t1', finance:'t3', fitness:'t2', todos:'t4', goals:'', memory:'t2', tasks:'t4', settings:'t1' };
+const TAB_SW = { chat:'', schedule:'t1', finance:'t3', assets:'t4', fitness:'t2', todos:'t4', goals:'', memory:'t2', tasks:'t4', settings:'t1' };
 const TAB_DEFAULT = ['chat', 'schedule', 'finance', 'fitness'];
 const tabLabel = (k) => k === 'chat' ? '对话' : (TAB_NAME[k] || k);
 function getTabs(){
@@ -1789,7 +1799,7 @@ function renderPanel(){
   // 身体 = 健身 + 原养生（睡眠/拉伸/饮水等，放在下面）
   const pBody = (d) => { const f = pFitness(d); f.appendChild(pWellness(d)); return f; };
   if (S.tab === 'wellness') S.tab = 'fitness';
-  const renderers = { schedule: pSchedule, fitness: pBody, wellness: pBody, finance: pFinance, todos: pTodos, goals: pGoals, memory: pMemory, tasks: pTasks, settings: pSettings };
+  const renderers = { schedule: pSchedule, fitness: pBody, wellness: pBody, finance: pFinance, assets: pAssets, todos: pTodos, goals: pGoals, memory: pMemory, tasks: pTasks, settings: pSettings };
   const fn = renderers[S.tab] || pSchedule;
   body.appendChild(pt);
   body.appendChild(fn(S.data || {}));
@@ -2596,6 +2606,153 @@ function nudgeCard(){
   return c;
 }
 
+/* ---------- 面板：资产（多账户、多币种、持仓估值、月度快照） ---------- */
+const AS_KIND = [['bank','银行'], ['deposit','定期'], ['broker','券商'], ['wallet','电子钱包'], ['cash','现金'], ['other','其他']];
+const AS_KIND_N = Object.fromEntries(AS_KIND);
+const AS_CCY = ['SGD','USD','CNY','HKD','EUR','GBP','JPY','AUD','MYR'];
+const CCY_SYM = { SGD:'S$', USD:'$', CNY:'¥', HKD:'HK$', EUR:'€', GBP:'£', JPY:'¥', AUD:'A$', MYR:'RM' };
+function money(v, ccy, dp){
+  if (v == null || !Number.isFinite(v)) return '—';
+  const d = dp ?? (Math.abs(v) >= 1000 ? 0 : 2);
+  return (CCY_SYM[ccy] || ccy + ' ') + v.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+}
+async function assetsCall(method, url, body){
+  const r = await fetch(url, { method, headers: body ? { 'Content-Type':'application/json' } : undefined, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json(); if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  S.assets = j; if (S.v === 'panel' && S.tab === 'assets') renderPanel();
+  if (j.errors && j.errors.length) toast('部分没取到：' + j.errors[0]);
+  return j;
+}
+function saveAccounts(accounts, msg){ return assetsCall('PUT', '/api/assets', { accounts }).then(() => msg && toast(msg)).catch(e => toast('失败：' + e.message)); }
+function accountModal(a){
+  const isNew = !a; a = a || { kind:'bank', currency: (S.assets && S.assets.baseCurrency) || 'SGD', balance: 0 };
+  openModal(isNew ? '新账户' : '编辑账户', [
+    { key:'name', label:'名称', value: a.name || '', placeholder:'如 DBS 储蓄 / moomoo / 支付宝余额宝' },
+    { key:'kind', label:'类型', type:'select', options: AS_KIND, value: a.kind },
+    { key:'currency', label:'币种', type:'select', options: AS_CCY.map(c => [c, c]), value: a.currency },
+    { key:'balance', label: a.kind === 'broker' ? '现金余额（持仓另算）' : '余额', type:'number', step:'0.01', value: a.balance },
+    { key:'rate', label:'年化利率 %（定期，可空）', type:'number', step:'0.01', value: a.rate ?? '' },
+    { key:'maturity', label:'到期日（定期，可空）', type:'date', value: a.maturity || '' },
+    { key:'note', label:'备注', value: a.note || '' },
+  ], (o) => {
+    if (!o.name || !o.name.trim()) return toast('名称必填');
+    const accs = ((S.assets || {}).accounts || []).slice();
+    const next = Object.assign({}, a, { name:o.name.trim(), kind:o.kind, currency:o.currency, balance: o.balance === '' ? 0 : +o.balance, rate: o.rate === '' ? undefined : +o.rate, maturity: o.maturity || undefined, note: o.note || undefined });
+    if (isNew){ next.id = 'a' + Date.now().toString(36); accs.push(next); } else { const i = accs.findIndex(x => x.id === a.id); accs[i] = next; }
+    saveAccounts(accs, isNew ? '已添加 · ' + next.name : '已保存');
+  });
+}
+function holdingModal(acc){
+  openModal('添加持仓 · ' + acc.name, [
+    { key:'symbol', label:'代码（美股 AAPL · 港股 0700.HK · 新加坡 D05.SI · A 股 600519.SS）', placeholder:'AAPL' },
+    { key:'qty', label:'数量', type:'number', step:'any' },
+    { key:'price', label:'价格（留空 = 每天自动取收盘价）', type:'number', step:'any' },
+    { key:'currency', label:'计价币种（留空 = 用行情的）', type:'select', options:[['', '自动']].concat(AS_CCY.map(c => [c, c])), value:'' },
+  ], (o) => {
+    const sym = String(o.symbol || '').trim().toUpperCase();
+    if (!/^[A-Z0-9.^=-]{1,20}$/.test(sym) || !(+o.qty)) return toast('代码和数量必填');
+    const accs = ((S.assets || {}).accounts || []).map(x => x.id === acc.id ? Object.assign({}, x, { holdings: (x.holdings || []).filter(h => h.symbol !== sym).concat([Object.assign({ symbol: sym, qty: +o.qty }, o.price === '' ? {} : { price: +o.price }, o.currency ? { currency: o.currency } : {})]) }) : x);
+    saveAccounts(accs, '已添加 · ' + sym);
+  });
+}
+function connectorModal(){
+  const c = (S.assets && S.assets.connectors) || {}; const ib = c.ibkr || {}; const mm = c.moomoo || {};
+  const servers = c.moomooServers || [];
+  openModal('连接券商（只读）', [
+    { key:'ibToken', label:'IBKR Flex token' + (ib.configured ? '（已保存，留空不改）' : ''), placeholder: ib.configured ? '••••••••' : '数字，在 IBKR 后台生成' },
+    { key:'ibQuery', label:'IBKR Flex 查询号', value: ib.queryId || '' },
+    { key:'mmServer', label:'moomoo MCP server 名' + (servers.length ? '（已连上：' + servers.join('、') + '）' : '（还没有连上的，见 docs/ASSETS-SETUP.md）'), value: mm.server || servers[0] || '' },
+    { key:'mmEnv', label:'moomoo 账户', type:'select', options:[['', '不接'], ['REAL','真实账户'], ['SIMULATE','模拟账户']], value: mm.configured ? mm.trdEnv : '' },
+  ], async (o) => {
+    const body = {};
+    if (o.ibQuery || o.ibToken) body.ibkr = { token: o.ibToken || '', queryId: o.ibQuery || '' };
+    else if (ib.configured) body.ibkr = null;
+    body.moomoo = o.mmEnv ? { server: o.mmServer || 'moomoo', trdEnv: o.mmEnv } : null;
+    try { await assetsCall('PUT', '/api/assets/connectors', body); toast('已保存 · 点「同步券商」试一次'); } catch (e) { toast('保存失败：' + e.message); }
+  });
+}
+function pAssets(d){
+  const f = document.createDocumentFragment();
+  const A = S.assets;
+  if (!A || Date.now() - (S._assetsAt || 0) > 60_000){
+    S._assetsAt = Date.now();
+    fetch('/api/assets').then(r => r.json()).then(j => { S.assets = j; if (S.v === 'panel' && S.tab === 'assets') renderPanel(); }).catch(() => {});
+    if (!A){ f.appendChild(emptyBox('读取中…')); return f; }
+  }
+  const v = A.valuation || {}; const base = A.baseCurrency;
+  // 顶部：总额 + 主币种
+  const hd = document.createElement('div'); hd.className = 'astop';
+  const tot = document.createElement('div'); tot.className = 'astot';
+  tot.innerHTML = '<span class="lab">总资产</span><b>' + esc(money(v.total, base, 0)) + '</b>' + (v.complete ? '' : '<span class="chip warn">部分账户没算进去</span>') + (v.fxDate ? '<span class="chip">汇率 ' + esc(v.fxDate) + '</span>' : '');
+  const bsel = document.createElement('select'); bsel.title = '显示币种';
+  for (const c of AS_CCY){ const o = document.createElement('option'); o.value = c; o.textContent = '按 ' + c + ' 显示'; if (c === base) o.selected = true; bsel.appendChild(o); }
+  bsel.addEventListener('change', () => assetsCall('PUT', '/api/assets', { baseCurrency: bsel.value }).catch(e => toast(e.message)));
+  hd.append(tot, bsel); f.appendChild(hd);
+  const act = document.createElement('div'); act.className = 'actbar';
+  act.appendChild(actBtn('＋ 账户', '新建账户', () => accountModal(null)));
+  act.appendChild(actBtn('刷新行情', '重新取汇率和收盘价', () => { toast('刷新中…'); assetsCall('POST', '/api/assets/refresh').then(() => toast('已刷新')).catch(e => toast(e.message)); }));
+  const cn = A.connectors || {};
+  if ((cn.ibkr && cn.ibkr.configured) || (cn.moomoo && cn.moomoo.configured)) act.appendChild(actBtn('同步券商', '只读拉取持仓和现金', () => { toast('同步中…'); assetsCall('POST', '/api/assets/sync').then(j => { if (!(j.errors || []).length) toast('已同步'); }).catch(e => toast(e.message)); }));
+  act.appendChild(actBtn('连接券商', 'IBKR Flex / moomoo（只读）', connectorModal));
+  f.appendChild(act);
+  if (!(A.accounts || []).length){
+    f.appendChild(emptyBox('还没有账户<br><b>点 ＋ 账户</b>，把银行、定期、券商、钱包都加进来；券商可以填持仓，价格每天自动更新'));
+    return f;
+  }
+  if (v.missing && v.missing.length){ const w = document.createElement('div'); w.className = 'empty'; w.style.textAlign = 'left'; w.textContent = '没算进总额：' + v.missing.slice(0, 4).join('；') + '（点「刷新行情」，或给持仓填手动价格）'; f.appendChild(w); }
+  for (const m of (A.maturing || [])){ const w = document.createElement('div'); w.className = 'nudgecard'; w.innerHTML = '<b>定期快到期</b><p>「' + esc(m.name) + '」' + (m.inDays === 0 ? '今天' : m.inDays + ' 天后（' + esc(m.maturity) + '）') + '到期，记得安排续存或转出。</p>'; f.appendChild(w); }
+  // 分布 + 走势
+  const by = v.byKind || {};
+  f.appendChild(mini3([
+    { lab:'现金', val: money((by.bank || 0) + (by.wallet || 0) + (by.cash || 0), base, 0), unit:'', cls:'ok' },
+    { lab:'定期', val: money(by.deposit || 0, base, 0), unit:'', cls:'amber' },
+    { lab:'投资', val: money(by.broker || 0, base, 0), unit:'', cls:'cool' },
+  ]));
+  const snaps = (A.snapshots || []).filter(s => s.shown != null).map(s => Object.assign({}, s, { total: s.shown })).slice(-12);
+  const fxNote = (A.snapshots || []).some(s => s.base !== base) ? ' · 旧快照按今天汇率折算' : '';
+  if (snaps.length > 1){
+    const c = card('走势', '每月最后一次估值 · ' + base + fxNote);
+    const max = Math.max(...snaps.map(s => s.total)), min = Math.min(...snaps.map(s => s.total));
+    const h = (x) => max === min ? 55 : 15 + 65 * (x - min) / (max - min);
+    const bars = document.createElement('div'); bars.className = 'bars'; bars.style.height = '90px';
+    snaps.forEach((s, i) => { const col = document.createElement('div'); col.style.cssText = 'flex:1;display:flex;flex-direction:column;justify-content:flex-end;height:100%;min-width:0';
+      const b = document.createElement('i'); b.style.cssText = 'flex:none;width:100%;height:' + h(s.total) + '%'; if (i === snaps.length - 1) b.className = 'hi'; b.title = s.month + ' · ' + money(s.total, base, 0);
+      const l = document.createElement('div'); l.className = 'bl'; l.textContent = s.month.slice(5) + '月';
+      col.append(b, l); bars.appendChild(col); });
+    c.appendChild(bars);
+    const first = snaps[0].total, last = snaps[snaps.length - 1].total;
+    const ch = document.createElement('div'); ch.className = 'chip'; ch.style.marginTop = '8px'; ch.textContent = (last >= first ? '+' : '') + money(last - first, base, 0) + '（' + (first ? ((last - first) / first * 100).toFixed(1) : '0') + '%）· 近 ' + snaps.length + ' 个月';
+    c.appendChild(ch); f.appendChild(c);
+  }
+  // 账户
+  const accs = A.accounts || []; const vals = Object.fromEntries((v.accounts || []).map(x => [x.id, x]));
+  for (const [k, kn] of AS_KIND){
+    for (const a of accs.filter(x => x.kind === k)){
+      const av = vals[a.id] || {};
+      const c = card(a.name, kn + ' · ' + a.currency + (a.source ? ' · 同步自 ' + (a.source === 'ibkr' ? 'IBKR' : 'moomoo') : '') + (a.rate ? ' · ' + a.rate + '%' : '') + (a.maturity ? ' · 到期 ' + a.maturity : ''));
+      row(c, a.kind === 'broker' ? '现金' : '余额', money(a.balance, a.currency));
+      for (const h of (av.holdings || [])){
+        const hr = document.createElement('div'); hr.className = 'prow hold';
+        const l = document.createElement('span'); l.className = 'l'; l.textContent = h.symbol + (h.name ? ' · ' + h.name : '') + ' × ' + h.qty + (h.price != null ? ' @ ' + money(h.price, h.currency) : '') + (h.stale ? '（旧价）' : '') + (h.missing ? '（缺价格）' : '');
+        const r = document.createElement('span'); r.className = 'r'; r.textContent = h.value != null ? money(h.value, h.currency) : '—';
+        const del = document.createElement('button'); del.className = 'del'; del.textContent = '×'; del.title = '删掉这个持仓';
+        del.addEventListener('click', () => saveAccounts(accs.map(x => x.id === a.id ? Object.assign({}, x, { holdings: (x.holdings || []).filter(y => y.symbol !== h.symbol) }) : x), '已删除 · ' + h.symbol));
+        hr.append(l, r, del); c.appendChild(hr);
+      }
+      const tr = document.createElement('div'); tr.className = 'prow'; tr.innerHTML = '<span class="l"><b>合计</b></span><span class="r">' + esc(money(av.value, a.currency)) + (a.currency !== base && av.valueBase != null ? ' <small class="chip">≈ ' + esc(money(av.valueBase, base, 0)) + '</small>' : '') + '</span>';
+      c.appendChild(tr);
+      const btns = document.createElement('div'); btns.className = 'actbar'; btns.style.margin = '10px 0 0';
+      btns.appendChild(actBtn('编辑', '', () => accountModal(a)));
+      if (a.kind === 'broker') btns.appendChild(actBtn('＋ 持仓', '', () => holdingModal(a)));
+      btns.appendChild(actBtn('删除', '', () => { if (confirm('删除账户「' + a.name + '」？')) saveAccounts(accs.filter(x => x.id !== a.id), '已删除'); }));
+      if (a.source){ const n = document.createElement('span'); n.className = 'chip'; n.textContent = '下次同步会覆盖手动改动'; btns.appendChild(n); }
+      c.appendChild(btns);
+      f.appendChild(c);
+    }
+  }
+  return f;
+}
+
 /* ---------- 面板：待办（添加/完成/删除） ---------- */
 const PR_ORDER = { high:0, mid:1, low:2 };
 const PR_LABEL = { high:'高', mid:'中', low:'低' };
@@ -3070,7 +3227,7 @@ function sayDraft(text){
 }
 
 /* ---------- ⌘K 命令面板 ---------- */
-const TAB_ICON = { chat:'chat', schedule:'cal', todos:'check', finance:'wallet', fitness:'dumbbell', wellness:'leaf', goals:'target', memory:'bulb', tasks:'tree', settings:'gear' };
+const TAB_ICON = { chat:'chat', schedule:'cal', todos:'check', finance:'wallet', assets:'cube', fitness:'dumbbell', wellness:'leaf', goals:'target', memory:'bulb', tasks:'tree', settings:'gear' };
 function palItems(q){
   const items = [];
   const add = (grp, icon, label, hint, run) => items.push({ grp, icon, label, hint, run });
