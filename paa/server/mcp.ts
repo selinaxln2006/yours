@@ -14,9 +14,12 @@ interface ToolAnnotations {
   destructiveHint?: boolean;
 }
 
+/** server 侧额外配置：tools = 只暴露这些工具（白名单）；readOnly = 白名单里的都按只读处理（risk 1） */
+export type ServerMcpConfig = McpServerConfig & { tools?: string[]; readOnly?: boolean };
+
 /** config.json 的 mcpServers → 合法项（单项不合法跳过，不整体失败） */
-export function parseMcpServers(raw: unknown): McpServerConfig[] {
-  const out: McpServerConfig[] = [];
+export function parseMcpServers(raw: unknown): ServerMcpConfig[] {
+  const out: ServerMcpConfig[] = [];
   if (!Array.isArray(raw)) return out;
   for (const s of raw as Array<Record<string, unknown>>) {
     if (typeof s !== 'object' || s === null) continue;
@@ -29,6 +32,8 @@ export function parseMcpServers(raw: unknown): McpServerConfig[] {
       args: Array.isArray(s.args) ? s.args.map(String) : undefined,
       env: typeof s.env === 'object' && s.env !== null ? (s.env as Record<string, string>) : undefined,
       risk: s.risk === 1 || s.risk === 2 || s.risk === 3 ? s.risk : undefined,
+      ...(Array.isArray(s.tools) ? { tools: s.tools.filter((x): x is string => typeof x === 'string') } : {}),
+      ...(s.readOnly === true && Array.isArray(s.tools) ? { readOnly: true } : {}),
     });
   }
   return out;
@@ -45,10 +50,14 @@ export function mcpToolRisk(tool: McpToolInfo, configRisk?: number): RiskLevel {
   return Math.max(r, configRisk ?? 0) as RiskLevel;
 }
 
-/** client → 带逐工具风险的 ToolDefinition */
-export function mcpToolDefinitions(client: McpClient, configRisk?: number): ToolDefinition[] {
+/** client → 带逐工具风险的 ToolDefinition；有白名单时只暴露白名单里的工具（比如券商 MCP 只给读取类，下单类根本不注册） */
+export function mcpToolDefinitions(client: McpClient, configRisk?: number, cfg?: { tools?: string[]; readOnly?: boolean }): ToolDefinition[] {
   const defs = createMcpToolDefinitions(client);
-  return defs.map((d, i) => ({ ...d, risk: mcpToolRisk(client.tools[i], configRisk) }));
+  const allow = cfg?.tools ? new Set(cfg.tools) : null;
+  return defs
+    .map((d, i) => ({ d, t: client.tools[i] }))
+    .filter(({ t }) => !allow || allow.has(t.name))
+    .map(({ d, t }) => ({ ...d, risk: allow && cfg?.readOnly ? 1 : mcpToolRisk(t, configRisk) }));
 }
 
 export interface McpConnectResult {

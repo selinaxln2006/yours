@@ -47,6 +47,8 @@ paa/                        # PAA 大脑层（TS ESM，Node 24 直接跑 .ts，�
 │   ├── weekly.ts           # 周复盘统计 + 每轮注入给模型的「现状」
 │   ├── memory-extract.ts   # 每 3 轮对话后台整理长期记忆
 │   ├── confirm-edit.ts     # 确认卡改参数的校验（只改已有字段、类型不变）
+│   ├── assets.ts           # 资产：多账户多币种、汇率行情、估值、月度快照（data/assets.json）
+│   ├── asset-connectors.ts # 券商只读接入：IBKR Flex / moomoo（经 OpenD + MCP 白名单）
 │   ├── mcp.ts              # server 侧 MCP 接入：按 annotations 定风险 + 日历读取（/api/calendar）
 │   └── demo-calendar.mjs   # 演示/测试用的假日历 MCP server
 ├── tools/                  # 内置工具组（注入到 pipeline）
