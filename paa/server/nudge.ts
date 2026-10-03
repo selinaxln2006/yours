@@ -24,7 +24,19 @@ export interface NudgeConfig {
   scope: 'all' | 'atHome';
   quietStart: string; // HH:MM
   quietEnd: string; // HH:MM
+  /** 到家后先等几分钟再问（给你一点缓冲；0 = 立刻） */
+  homeDelayMin: number;
+  /** 晚间检查：到这个时间还有没完成的承诺就问一句（'' = 不检查） */
+  eveningAt: string;
   channel: { type: ChannelType; url: string };
+}
+
+/** 对话里约好的回访（"我先躺会儿" → 30 分钟后问一句） */
+export interface Checkin {
+  id: string;
+  dueAt: number;
+  message: string;
+  createdAt: number;
 }
 
 export interface NudgeState {
@@ -33,6 +45,7 @@ export interface NudgeState {
   sent: number;
   lastSentAt: number | null;
   snoozed: boolean;
+  eveningSent?: boolean;
 }
 
 export interface TodoLike {
@@ -60,6 +73,8 @@ export const DEFAULT_CONFIG: NudgeConfig = {
   scope: 'all',
   quietStart: '00:30',
   quietEnd: '08:00',
+  homeDelayMin: 15,
+  eveningAt: '',
   channel: { type: 'none', url: '' },
 };
 
@@ -93,6 +108,8 @@ export function normalizeConfig(raw: unknown): NudgeConfig {
     scope: r.scope === 'atHome' ? 'atHome' : 'all',
     quietStart: typeof r.quietStart === 'string' && HM.test(r.quietStart) ? r.quietStart : DEFAULT_CONFIG.quietStart,
     quietEnd: typeof r.quietEnd === 'string' && HM.test(r.quietEnd) ? r.quietEnd : DEFAULT_CONFIG.quietEnd,
+    homeDelayMin: clamp(r.homeDelayMin, 0, 120, DEFAULT_CONFIG.homeDelayMin),
+    eveningAt: typeof r.eveningAt === 'string' && HM.test(r.eveningAt) ? r.eveningAt : '',
     channel: type !== 'none' && validChannelUrl(url) ? { type, url } : { type: 'none', url: '' },
   };
 }
@@ -102,7 +119,7 @@ export function ymd(d: Date): string {
 }
 
 export function freshState(now: Date): NudgeState {
-  return { day: ymd(now), arrivedAt: null, sent: 0, lastSentAt: null, snoozed: false };
+  return { day: ymd(now), arrivedAt: null, sent: 0, lastSentAt: null, snoozed: false, eveningSent: false };
 }
 
 /** 是否在安静时段（支持跨午夜，如 23:30–08:00）；start == end 视为没有安静时段 */
@@ -130,8 +147,35 @@ export function shouldSend(cfg: NudgeConfig, st: NudgeState, pendingCount: numbe
   if (st.day !== ymd(now)) return false;
   if (st.sent >= cfg.maxCount) return false;
   if (inQuiet(now, cfg.quietStart, cfg.quietEnd)) return false;
+  if (st.sent === 0 && now.getTime() - st.arrivedAt < cfg.homeDelayMin * 60_000) return false;
   if (st.lastSentAt !== null && now.getTime() - st.lastSentAt < cfg.intervalMin * 60_000) return false;
   return true;
+}
+
+/** 晚间检查：开着、到点、今天没发过、没"今天算了"、有没完成的承诺、不在安静时段 */
+export function shouldEvening(cfg: NudgeConfig, st: NudgeState, pendingCount: number, now: Date): boolean {
+  if (!cfg.enabled || !cfg.eveningAt || st.snoozed || st.eveningSent || pendingCount === 0) return false;
+  if (st.day !== ymd(now)) return false;
+  if (inQuiet(now, cfg.quietStart, cfg.quietEnd)) return false;
+  const m = now.getHours() * 60 + now.getMinutes();
+  const at = Number(cfg.eveningAt.slice(0, 2)) * 60 + Number(cfg.eveningAt.slice(3, 5));
+  return m >= at;
+}
+
+export function eveningMessage(pending: TodoLike[]): NudgeMessage {
+  const titles = pending.map((t) => String(t.title ?? '').slice(0, 40)).filter(Boolean);
+  return {
+    title: '今天还剩 ' + titles.length + ' 件',
+    body: `「${titles[0] ?? ''}」${titles.length > 1 ? ` 等 ${titles.length} 件` : ''}还没做。现在做一件，还是挪到明天？`,
+    urgent: false,
+    todos: titles,
+  };
+}
+
+/** 到期、且不在安静时段的回访（安静时段里到期的，等安静时段结束再发） */
+export function dueCheckins(list: Checkin[], cfg: NudgeConfig, now: Date): Checkin[] {
+  if (inQuiet(now, cfg.quietStart, cfg.quietEnd)) return [];
+  return list.filter((c) => c.dueAt <= now.getTime());
 }
 
 /** 文案：中性、具体、只说一件事；最后一次说明之后不再打扰 */
@@ -199,6 +243,8 @@ export class NudgeEngine {
 
   private get cfgFile(): string { return path.join(this.deps.dataDir, 'nudge.json'); }
   private get stateFile(): string { return path.join(this.deps.dataDir, 'nudge-state.json'); }
+  private get checkinFile(): string { return path.join(this.deps.dataDir, 'nudge-checkins.json'); }
+  checkins: Checkin[] = [];
 
   async init(): Promise<void> {
     try { this.config = normalizeConfig(JSON.parse(await readFile(this.cfgFile, 'utf8'))); } catch { this.config = { ...DEFAULT_CONFIG }; }
@@ -206,6 +252,33 @@ export class NudgeEngine {
       const s = JSON.parse(await readFile(this.stateFile, 'utf8')) as NudgeState;
       if (s && s.day === ymd(new Date())) this.state = { ...freshState(new Date()), ...s };
     } catch { /* 无状态 */ }
+    try {
+      const c = JSON.parse(await readFile(this.checkinFile, 'utf8')) as Checkin[];
+      // 过期超过 12 小时的回访不再补发
+      if (Array.isArray(c)) this.checkins = c.filter((x) => x && typeof x.dueAt === 'number' && Date.now() - x.dueAt < 12 * 3600_000);
+    } catch { /* 无回访 */ }
+  }
+
+  private async saveCheckins(): Promise<void> {
+    await mkdir(this.deps.dataDir, { recursive: true });
+    await writeFile(this.checkinFile, JSON.stringify(this.checkins) + '\n', 'utf8');
+  }
+
+  /** 约一个回访：afterMin 分钟后按 message 问一句（最多同时 10 个） */
+  async scheduleCheckin(afterMin: number, message: string, now: Date): Promise<Checkin> {
+    const min = Math.min(720, Math.max(1, Math.round(Number(afterMin) || 30)));
+    const msg = String(message ?? '').trim().slice(0, 200) || '说好的回访：现在怎么样了？';
+    const c: Checkin = { id: Math.random().toString(36).slice(2, 10), dueAt: now.getTime() + min * 60_000, message: msg, createdAt: now.getTime() };
+    this.checkins = [...this.checkins, c].sort((a, b) => a.dueAt - b.dueAt).slice(-10);
+    await this.saveCheckins();
+    return c;
+  }
+
+  async cancelCheckin(id: string): Promise<boolean> {
+    const n = this.checkins.length;
+    this.checkins = this.checkins.filter((c) => c.id !== id);
+    if (this.checkins.length !== n) await this.saveCheckins();
+    return this.checkins.length !== n;
   }
 
   start(): void {
@@ -257,7 +330,21 @@ export class NudgeEngine {
   /** 每分钟一次；返回这次是否发了 */
   async tick(now: Date): Promise<boolean> {
     this.rollover(now);
+    // 对话里约好的回访：用户自己要求的，不受总开关限制（只受安静时段）
+    const due = dueCheckins(this.checkins, this.config, now);
+    if (due.length) {
+      const ids = new Set(due.map((c) => c.id));
+      this.checkins = this.checkins.filter((c) => !ids.has(c.id));
+      await this.saveCheckins();
+      for (const c of due) await this.deliver({ title: '回访', body: c.message, urgent: false, todos: this.pending(now).map((x) => String(x.title ?? '')).slice(0, 5) });
+    }
     const pending = this.pending(now);
+    if (shouldEvening(this.config, this.state, pending.length, now)) {
+      this.state.eveningSent = true;
+      await this.persist();
+      await this.deliver(eveningMessage(pending));
+      return true;
+    }
     if (!shouldSend(this.config, this.state, pending.length, now)) return false;
     const msg = composeMessage(this.config, this.state.sent, pending);
     this.state.sent += 1;
@@ -292,8 +379,8 @@ export class NudgeEngine {
     return this.deliver({ title: 'Yours 测试提醒', body: '能看到这条，说明提醒渠道接好了。', urgent: false, todos: [] });
   }
 
-  summary(now: Date): { config: NudgeConfig; state: NudgeState; pending: number; quiet: boolean } {
+  summary(now: Date): { config: NudgeConfig; state: NudgeState; pending: number; quiet: boolean; checkins: Checkin[] } {
     this.rollover(now);
-    return { config: this.config, state: this.state, pending: this.pending(now).length, quiet: inQuiet(now, this.config.quietStart, this.config.quietEnd) };
+    return { config: this.config, state: this.state, pending: this.pending(now).length, quiet: inQuiet(now, this.config.quietStart, this.config.quietEnd), checkins: this.checkins };
   }
 }

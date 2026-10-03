@@ -119,3 +119,14 @@ test('importBlob merge：数组拼接 + 对象覆盖', async () => {
   // merge 不带的键保持默认
   assert.equal(p.targetWeight, (defaultLifeData().profile as Record<string, unknown>).targetWeight);
 });
+
+test('并发事务写同一个键：不抢 tmp 文件，最后落盘的是全部改动', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'paa-life-race-'));
+  const s = new LifeStore(dir);
+  await s.init();
+  await Promise.all(Array.from({ length: 8 }, (_, i) =>
+    s.tx((d) => { (d.todos as unknown[]).push({ id: 't' + i, title: 'x' + i, done: false }); }, { source: 'test' })));
+  const s2 = new LifeStore(dir);
+  await s2.init();
+  assert.equal((s2.get('todos') as unknown[]).length, 8);
+});

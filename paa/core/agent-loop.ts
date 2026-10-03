@@ -34,6 +34,8 @@ export interface AgentLoopDeps {
    * undefined = 默认启用（用 adapter 自动创建）；null = 显式禁用；实例 = 自定义配置
    */
   compactor?: Compactor | null;
+  /** 宿主注入的"现状"块（时间、今日计划等），每轮重新生成并拼在人格之后；失败时忽略 */
+  contextProvider?: () => string | Promise<string>;
 }
 
 export interface AgentLoopCtx {
@@ -119,7 +121,15 @@ export class AgentLoop {
       tools
         .map((t) => `- ${t.name}: ${t.desc}（参数: ${Object.keys(t.params).join(', ') || '无'}）`)
         .join('\n');
-    return this.deps.systemPrompt + memBlock + toolBlock;
+    let ctxBlock = '';
+    if (this.deps.contextProvider) {
+      try {
+        ctxBlock = await this.deps.contextProvider();
+      } catch {
+        ctxBlock = '';
+      }
+    }
+    return this.deps.systemPrompt + ctxBlock + memBlock + toolBlock;
   }
 
   async run(userText: string, ctx: AgentLoopCtx, opts?: RunOptions): Promise<LoopResult> {

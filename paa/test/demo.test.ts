@@ -59,3 +59,11 @@ test('拆解目标：一次给出 5 天的建议计划，带目标 id，日期�
   assert.equal(a.goalId, 'demo-g2');
   assert.deepEqual(a.items.map((x) => x.dueDate), ['2026-10-02', '2026-10-03', '2026-10-04', '2026-10-05', '2026-10-06']);
 });
+
+test('回访 / 到家 / 周计划（多个目标）', () => {
+  assert.deepEqual(names('我先躺会儿'), ['nudge_checkin']);
+  assert.equal(parseIntents('先躺 20 分钟')[0].call.arguments.afterMin, 20);
+  assert.deepEqual(names('我到家了'), ['nudge_home']);
+  const w = parseIntents('给我本周建议：目标「面试」（id: g1）、目标「减重」（id: g2）', new Date(2026, 9, 5, 9));
+  assert.deepEqual(w.map((i) => i.call.arguments.goalId), ['g1', 'g2']);
+});

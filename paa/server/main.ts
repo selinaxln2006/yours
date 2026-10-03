@@ -40,6 +40,9 @@ import { checkRequestSource, generateAccessToken, redactSearch, tokenMatches } f
 import { DemoAdapter, seedDemoData } from './demo.ts';
 import { turnMessages } from './turn.ts';
 import { NudgeEngine } from './nudge.ts';
+import { applyEdits } from './confirm-edit.ts';
+import { weeklyStats, buildContext } from './weekly.ts';
+import { extractMemories } from './memory-extract.ts';
 import {
   parseMcpServers, mcpToolDefinitions, connectMcpServers, findCalendarClient,
   fetchCalendarEvents, isValidRange, isValidTimeZone, type CalendarEvent,
@@ -78,13 +81,22 @@ const MAX_ROUNDS = (() => {
   return Number.isInteger(n) && n > 0 && n <= 200 ? n : 24;
 })();
 
-const SYSTEM_PROMPT = `你是 Yours，用户的个人 AI 搭档，现在运行在生活工作台控制台里。锐利、直接、不谄媚；长内容用分级标题；默认简体中文；不说废话客套。
+const SYSTEM_PROMPT = `你是 Yours，用户的个人助手。你的工作是陪用户把目标过成日常：帮他把目标拆到每一天，看见计划和执行之间的落差，在他最容易掉线的时候拉一把。
+
+你是谁（语气与分寸）：
+- 像一个了解他的朋友兼教练：直接、具体、有温度；不谄媚、不说教、不堆客套；默认简体中文，短句优先
+- 约束是用户授权的：他承诺过的事，你可以追问、可以提醒，但口吻是"拉一把"不是"批评"；一次只提一件、给一个最小下一步（"先做 10 分钟"）
+- 不管他没请你管的事（作息、吃饭、洗澡、睡觉之类不主动催）；他说"别管了/今天算了"就停
+- 注意到落差就说出来：比如承诺了没做、某个目标一周没动、建议一直没被采纳——说事实 + 问原因 + 给调整，不要假装没看见
+- 你了解他：下方"现状"和"相关记忆"是你对他的了解，用它们让建议具体到他本人；不知道的就问，别编
 
 当前已注册工具（回答"你能做什么/能上网吗"时以此清单为准，逐项如实陈述；不夸大能力，也不自我设限——有 shell 和 web 工具就能联网，不要说"我没有网络"）：
 __TOOLS__
 
 能力要点：
 - life_* 直接读写生活数据（目标/健身/养生/日程/待办/记账），写入实时推送用户界面；做规划前先 life_query_summary 了解现状
+- 回访：用户说了自己在哪、在干嘛、或者"先躺会儿/等下再做"，而今天还有承诺没完成时，用 nudge_checkin 约一个回访（如 30 分钟后），并告诉他你会回来问；用户说"我到家了"时可调 nudge_home（按他设置的规则提醒）
+- 目标和建议要讨论：拆解前先问清楚他现在的进度、这周有多少时间、卡在哪；建议随每周进度调整（完成得好就加一点，完不成就减量、换更小的步子）
 - 计划分两种：目标拆解出来的参考计划用 life_suggest_plan 写成「建议」（不提醒、可以多）；用户明确说要做的事用 life_add_todo（「承诺」，会参与到家提醒）。用户说"回家后/到家要做"时 add_todo 设 atHome:true。不要替用户把建议变成承诺
 - 重复提醒用 add_schedule 的 rrule/rruleDays：每周一 → rrule:"weekly"+rruleDays:[1]，持续N周传 count:N
 - web_fetch / web_search 可直接联网查资料、抓网页、搜 GitHub；web_download 下载文件到沙箱 downloads/（skill 包、PDF 模板等）
@@ -117,7 +129,7 @@ __TOOLS__
 - 关键：不要一上来就堆一大段文字；执行类任务每轮中间说明保持简短（≤3 行），把篇幅留给最终总结
 
 记忆纪律（P1）：
-- 对话中发现的重要事实/偏好/决策，用 memory_save 主动固化（选好 type 和 tags；默认存 L1 事实层）
+- 对话中发现的重要事实/偏好/决策/习惯（例如"一到家就容易躺平""周三晚上有课""不喜欢被催睡觉"），用 memory_save 主动固化（选好 type 和 tags；默认存 L1 事实层）
 - 零散事实积累多了，用 memory_consolidate 聚合为 L2 场景块 / 更新 L3 画像
 
 __PLATFORM__
@@ -242,6 +254,8 @@ interface PendingConfirm {
   timer: ReturnType<typeof setTimeout>;
   /** 发起确认的工具名（"总是允许"以此为准，不信任客户端回传的 tool 字段） */
   tool?: string;
+  /** 工具调用参数（同一个对象引用：确认时改了它，执行的就是改过的值） */
+  args?: Record<string, unknown>;
 }
 const pendingConfirms = new Map<string, PendingConfirm>();
 /** 会话级放行（所有连接共享；单用户本地场景） */
@@ -256,7 +270,7 @@ function broadcast(obj: unknown): void {
 const CONFIRM_TIMEOUT_MS = 60_000;
 
 /** ctx.ask 实现：推确认卡到控制台，等待应答；超时/无连接 = 拒绝 */
-function askOverWs(prompt: string, toolName?: string): Promise<boolean> {
+function askOverWs(prompt: string, toolName?: string, args?: Record<string, unknown>): Promise<boolean> {
   if (toolName && trustedTools.has(toolName)) return Promise.resolve(true);
   const id = randomUUID().slice(0, 8);
   return new Promise((resolve) => {
@@ -265,8 +279,8 @@ function askOverWs(prompt: string, toolName?: string): Promise<boolean> {
       broadcast({ type: 'confirm_timeout', id });
       resolve(false);
     }, CONFIRM_TIMEOUT_MS);
-    pendingConfirms.set(id, { resolve, timer, tool: toolName });
-    broadcast({ type: 'confirm', id, tool: toolName ?? '?', prompt, connections: connections.size });
+    pendingConfirms.set(id, { resolve, timer, tool: toolName, args });
+    broadcast({ type: 'confirm', id, tool: toolName ?? '?', prompt, args, connections: connections.size });
     if (connections.size === 0) {
       // 没有控制台连着：直接拒绝（安全默认）
       clearTimeout(timer);
@@ -277,11 +291,16 @@ function askOverWs(prompt: string, toolName?: string): Promise<boolean> {
 }
 
 /** 应答一张确认卡（WS 消息与 POST /api/confirm 共用）。返回是否找到对应的待确认项 */
-function answerConfirm(id: string, ok: boolean, always: boolean): boolean {
+function answerConfirm(id: string, ok: boolean, always: boolean, edits?: unknown): boolean {
   const p = pendingConfirms.get(id);
   if (!p) return false;
   pendingConfirms.delete(id);
   clearTimeout(p.timer);
+  // 允许时可以顺手改参数（危险工具除外）：只改已有字段、类型不变
+  if (ok && edits && p.args && p.tool && isTrustable(p.tool)) {
+    const { changed } = applyEdits(p.args, edits);
+    if (changed.length) console.log(`[confirm] ${p.tool} 用户修改了 ${changed.join(', ')}`);
+  }
   if (ok && always && p.tool && isTrustable(p.tool)) {
     trustedTools.add(p.tool);
     broadcast({ type: 'trusted', tool: p.tool });
@@ -293,7 +312,7 @@ function answerConfirm(id: string, ok: boolean, always: boolean): boolean {
 
 function handleWsMessage(conn: WsConnection, msg: WsMessage): void {
   if (msg.type === 'confirm' && typeof msg.id === 'string') {
-    answerConfirm(msg.id, msg.ok === true, msg.always === true);
+    answerConfirm(msg.id, msg.ok === true, msg.always === true, (msg as { args?: unknown }).args);
     return;
   }
   if (msg.type === 'ping') {
@@ -647,6 +666,30 @@ async function main(): Promise<void> {
   });
   await nudge.init();
   nudge.start();
+  pipeline.register({
+    name: 'nudge_checkin',
+    desc: '约一个回访：afterMin 分钟后在网页（和用户配置的手机渠道）问用户一句 message。用于用户说"先躺会儿/等下再做/我在路上"等场景，帮他按承诺回来做事。只约用户同意的回访',
+    params: {
+      afterMin: { type: 'number', desc: '多少分钟后（1-720）', required: true },
+      message: { type: 'string', desc: '到时候说的话，具体到事，如「躺了半小时了，先做 10 分钟概率论？」', required: true },
+    },
+    risk: 2,
+    handler: async (args) => {
+      const c = await nudge.scheduleCheckin(Number(args.afterMin), String(args.message ?? ''), new Date());
+      broadcast({ type: 'checkin_set', checkin: c });
+      return { ok: true, at: new Date(c.dueAt).toTimeString().slice(0, 5), id: c.id };
+    },
+  });
+  pipeline.register({
+    name: 'nudge_home',
+    desc: '记下"用户到家了"，按用户在设置里定的到家提醒规则处理（规则关闭时只记录）',
+    params: {},
+    risk: 2,
+    handler: async () => {
+      const r = await nudge.arrive(new Date());
+      return { ok: true, enabled: nudge.config.enabled, delayMin: nudge.config.homeDelayMin, pending: r.pending.map((x) => x.title) };
+    },
+  });
 
   const adapter = DEMO || !llmConfig ? new DemoAdapter() : createAdapter(llmConfig);
   const toolsDesc = pipeline
@@ -662,7 +705,46 @@ async function main(): Promise<void> {
       : ''),
     memoryProvider: memory,
     maxRounds: MAX_ROUNDS,
+    // 每轮注入"现状"：时间、今天的承诺/建议、目标进度、上周完成率、待回访
+    contextProvider: () => {
+      const now = new Date();
+      const extra = nudge.checkins.length
+        ? [`已约的回访：${nudge.checkins.map((c) => `${new Date(c.dueAt).toTimeString().slice(0, 5)}「${c.message}」`).join('；')}`]
+        : [];
+      return buildContext(
+        (lifeStore.get('todos') as Array<Record<string, unknown>> | undefined) ?? [],
+        (lifeStore.get('goals') as Array<Record<string, unknown>> | undefined) ?? [],
+        now,
+        extra,
+      );
+    },
   });
+
+  // 自动记忆：每个会话每 3 轮对话，后台挑出值得长期记住的事（演示模式不做）
+  const turnCount = new Map<string, number>();
+  let extracting = false;
+  function noteTurn(sid: string, msgs: ChatMessage[]): void {
+    if (DEMO) return;
+    const n = (turnCount.get(sid) ?? 0) + 1;
+    turnCount.set(sid, n);
+    if (n % 3 !== 0 || extracting) return;
+    extracting = true;
+    void (async () => {
+      try {
+        const known = (await memory.list()).filter((r) => !r.invalidAt && r.layer !== 'L0').map((r) => r.content);
+        const found = await extractMemories(adapter, msgs.slice(-16), known);
+        for (const m of found) await memory.save({ layer: 'L1', type: m.type, content: m.content, tags: m.tags, source: 'agent' });
+        if (found.length) {
+          console.log(`[memory] 自动记住 ${found.length} 条`);
+          broadcast({ type: 'memory_learned', items: found.map((m) => m.content) });
+        }
+      } catch (e) {
+        console.warn('[memory] 自动整理失败:', e instanceof Error ? e.message : String(e));
+      } finally {
+        extracting = false;
+      }
+    })();
+  }
 
   // 数据变更 → WS 推送 + S2：本地非同步来源的修改标记 dirty（下次 syncOnce 推送）
   // S3：本地改动 → 4s 去抖后台推送（云端镜像准实时更新，其他端经 Realtime 感知）
@@ -940,6 +1022,56 @@ async function main(): Promise<void> {
         return;
       }
 
+      // ---- 周复盘统计 ----
+      if (p === '/api/weekly' && req.method === 'GET') {
+        sendJson(res, 200, weeklyStats(
+          (lifeStore.get('todos') as Array<Record<string, unknown>> | undefined) ?? [],
+          (lifeStore.get('goals') as Array<Record<string, unknown>> | undefined) ?? [],
+          new Date(),
+        ));
+        return;
+      }
+
+      // ---- 记忆：「它眼中的你」（只给 L1-L3，L0 原文不出）----
+      if (p === '/api/memory' && req.method === 'GET') {
+        const all = await memory.list();
+        sendJson(res, 200, {
+          records: all
+            .filter((r) => !r.invalidAt && r.layer !== 'L0')
+            .map((r) => ({ id: r.id, layer: r.layer, type: r.type, content: r.content, tags: r.tags, source: r.source, updatedAt: r.updatedAt })),
+        });
+        return;
+      }
+      if (p === '/api/memory' && req.method === 'POST') {
+        const body = JSON.parse((await readBody(req, 8192)).toString('utf8')) as { content?: unknown; type?: unknown };
+        const content = typeof body.content === 'string' ? body.content.trim().slice(0, 500) : '';
+        if (!content) { sendJson(res, 400, { error: 'content 必填' }); return; }
+        const type = body.type === 'preference' ? 'preference' : 'fact';
+        const r = await memory.save({ layer: 'L1', type, content, tags: ['user-edit'], source: 'user' });
+        sendJson(res, 200, { ok: true, id: r.id });
+        return;
+      }
+      const memMatch = /^\/api\/memory\/([\w-]+)$/.exec(p);
+      if (memMatch && (req.method === 'PUT' || req.method === 'DELETE')) {
+        const id = memMatch[1];
+        const all = await memory.list();
+        const old = all.find((r) => r.id === id && !r.invalidAt);
+        if (!old) { sendJson(res, 404, { error: '没有这条记忆' }); return; }
+        if (req.method === 'DELETE') {
+          await memory.forget(id);
+          sendJson(res, 200, { ok: true });
+          return;
+        }
+        const body = JSON.parse((await readBody(req, 8192)).toString('utf8')) as { content?: unknown };
+        const content = typeof body.content === 'string' ? body.content.trim().slice(0, 500) : '';
+        if (!content) { sendJson(res, 400, { error: 'content 必填' }); return; }
+        // 改 = 旧的失效 + 写一条新的（保留层级/类型/标签，来源记为用户）
+        await memory.forget(id);
+        const r = await memory.save({ layer: old.layer, type: old.type, content, tags: old.tags, source: 'user' });
+        sendJson(res, 200, { ok: true, id: r.id });
+        return;
+      }
+
       // ---- 到家提醒 ----
       if (p === '/api/nudge' && req.method === 'GET') {
         sendJson(res, 200, nudge.summary(new Date()));
@@ -1156,6 +1288,7 @@ async function main(): Promise<void> {
           });
           const fresh = turnMessages(result.messages ?? [], prior, message);
           const updated = await chatStore.append(sid, fresh, messagesToUiHistory(fresh));
+          noteTurn(sid, [...prior, ...fresh]);
           return {
             ok: true,
             sessionId: sid,
@@ -1199,6 +1332,7 @@ async function main(): Promise<void> {
           // 只持久化本轮新增（去 system）；result.messages 含 prior，整段 append 会翻倍
           const fresh = turnMessages(result.messages ?? [], prior, message);
           await chatStore.append(chatSession.id, fresh, messagesToUiHistory(fresh));
+          noteTurn(chatSession.id, [...prior, ...fresh]);
           chatSession.messages = (chatSession.messages ?? []).concat(fresh).slice(-MAX_HISTORY);
           return {
             ok: true,
@@ -1269,6 +1403,7 @@ async function main(): Promise<void> {
           // 与 /api/chat 一致：落盘本轮轨迹（此前 console 的流式对话从不保存，刷新/切会话即丢失）
           const fresh = turnMessages(result.messages ?? [], prior, message);
           await chatStore.append(chatSession.id, fresh, messagesToUiHistory(fresh));
+          noteTurn(chatSession.id, [...prior, ...fresh]);
           chatSession.messages = (chatSession.messages ?? []).concat(fresh).slice(-MAX_HISTORY);
           return result;
         });
@@ -1290,12 +1425,12 @@ async function main(): Promise<void> {
 
       // ---- REST：确认卡应答（console.html 的"允许/拒绝/总是允许"按钮走这里）----
       if (p === '/api/confirm' && req.method === 'POST') {
-        const body = JSON.parse((await readBody(req)).toString('utf8')) as { id?: unknown; ok?: unknown; always?: unknown };
+        const body = JSON.parse((await readBody(req)).toString('utf8')) as { id?: unknown; ok?: unknown; always?: unknown; args?: unknown };
         if (typeof body.id !== 'string') {
           sendJson(res, 400, { error: 'id 必填' });
           return;
         }
-        const found = answerConfirm(body.id, body.ok === true, body.always === true);
+        const found = answerConfirm(body.id, body.ok === true, body.always === true, body.args);
         sendJson(res, found ? 200 : 404, found ? { ok: true } : { error: '确认已超时或不存在' });
         return;
       }

@@ -35,6 +35,24 @@ export function parseIntents(text: string, now = new Date()): Intent[] {
   const out: Intent[] = [];
   const t = text.replace(/\s+/g, ' ');
 
+  // 周计划："本周建议 … 目标「A」（id: g1）… 目标「B」（id: g2）"
+  const ids = [...t.matchAll(/「([^」]+)」（id[:：]\s*([\w-]+)）/g)];
+  if (/本周|这周/.test(t) && /建议|计划/.test(t) && ids.length > 1) {
+    return ids.slice(0, 3).map(([, title, goalId]) => ({
+      call: { name: 'life_suggest_plan', arguments: { goalId, items: [0, 2, 4].map((k, i) => ({ title: `${title.slice(0, 10)}：${['定这周最小的一步，做 30 分钟', '推进一块，做完写一句心得', '回看进度，调整下周'][i]}`, dueDate: dayOffset(k, now), priority: i ? 'mid' : 'high' })) } },
+      say: `「${title}」本周 3 件`,
+    }));
+  }
+
+  // 回访："先躺会儿" / "等下再做" / "我在路上"
+  if (/先躺|躺会|等下再|等会再|待会再|我在路上|先休息/.test(t)) {
+    const min = Number(/(\d+)\s*分钟/.exec(t)?.[1] ?? 30);
+    return [{ call: { name: 'nudge_checkin', arguments: { afterMin: min, message: `${min} 分钟到了，先做 10 分钟今天的事？` } }, say: `${min} 分钟后回来问你` }];
+  }
+  if (/我到家了|到家了/.test(t)) {
+    return [{ call: { name: 'nudge_home', arguments: {} }, say: '记下你到家了' }];
+  }
+
   // 拆解目标："帮我把目标「X」（id: g1）拆成这周每天的参考计划"
   if (/拆/.test(t) && /目标|计划/.test(t)) {
     const title = /「([^」]+)」/.exec(t)?.[1] ?? '这个目标';
@@ -161,9 +179,12 @@ export class DemoAdapter implements LLMAdapter {
     if (results.length) {
       const failed = results.filter((m) => /"ok"\s*:\s*false/.test(m.content ?? ''));
       const done = results.length - failed.length;
-      const planned = turn.some((m) => (m.toolCalls ?? []).some((c) => c.name === 'life_suggest_plan'));
+      const called = (n: string): boolean => turn.some((m) => (m.toolCalls ?? []).some((c) => c.name === n));
+      if (called('nudge_checkin') && done) return { role: 'assistant', content: '好，先歇着。到点我来问你一句——到时候先做 10 分钟就行。' };
+      if (called('nudge_home') && done) return { role: 'assistant', content: '欢迎回来。先缓一会儿，过一阵我来问问今天剩下的事。' };
+      const planned = called('life_suggest_plan');
       const lines = [planned && done
-        ? '放好了：未来 5 天每天一件，都标成「建议」。打开「今天」，把今天想做的点「今天做」——只有你点过的才会提醒。'
+        ? '放好了：未来 5 天每天一件，都标成「建议」。在「今天」或目标卡里点 + 挑这周要做的——只有你加入的才会提醒。'
         : done ? `记好了 ✅ 共 ${done} 项，「今天」已经更新。` : '这次什么都没记下。'];
       if (failed.length) lines.push(`有 ${failed.length} 项没执行（被拒绝或失败），需要的话换个说法再试。`);
       return { role: 'assistant', content: lines.join('\n') };
