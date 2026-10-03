@@ -40,14 +40,17 @@ import { checkRequestSource, generateAccessToken, redactSearch, tokenMatches } f
 import { DemoAdapter, seedDemoData } from './demo.ts';
 import { turnMessages } from './turn.ts';
 import { NudgeEngine } from './nudge.ts';
+import { AssetsStore, normalizeAccount, maturing, type Account } from './assets.ts';
+import { fetchIbkr, fetchMoomoo, mergeBroker } from './asset-connectors.ts';
+import { seedDemoAssets } from './demo.ts';
 import { applyEdits } from './confirm-edit.ts';
 import { weeklyStats, buildContext } from './weekly.ts';
 import { extractMemories } from './memory-extract.ts';
 import {
   parseMcpServers, mcpToolDefinitions, connectMcpServers, findCalendarClient,
-  fetchCalendarEvents, isValidRange, isValidTimeZone, type CalendarEvent,
+  fetchCalendarEvents, isValidRange, isValidTimeZone, type CalendarEvent, type ServerMcpConfig,
 } from './mcp.ts';
-import { sanitizeServerName, type McpServerConfig } from '../core/mcp-client.ts';
+import { sanitizeServerName } from '../core/mcp-client.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PAA_ROOT = path.resolve(__dirname, '..');
@@ -171,7 +174,7 @@ async function loadLlmConfig(): Promise<LLMConfig | null> {
 }
 
 /** config.mcpServers；演示模式换成内置的演示日历 */
-async function loadMcpConfig(): Promise<McpServerConfig[]> {
+async function loadMcpConfig(): Promise<ServerMcpConfig[]> {
   if (DEMO) return [{ name: 'calendar', command: process.execPath, args: [path.join(__dirname, 'demo-calendar.mjs')] }];
   try {
     const raw = JSON.parse(await readFile(path.join(PAA_ROOT, 'config.json'), 'utf8')) as Record<string, unknown>;
@@ -647,7 +650,7 @@ async function main(): Promise<void> {
   const mcp = await connectMcpServers(mcpCfgs);
   const mcpByName = new Map(mcpCfgs.map((c) => [c.name, c]));
   for (const c of mcp.clients) {
-    for (const t of mcpToolDefinitions(c, mcpByName.get(c.name)?.risk)) pipeline.register(t);
+    for (const t of mcpToolDefinitions(c, mcpByName.get(c.name)?.risk, mcpByName.get(c.name))) pipeline.register(t);
   }
   for (const [name, why] of Object.entries(mcp.errors)) console.error(`MCP server ${name} 连接失败（已跳过）: ${why}`);
   const closeMcp = (): void => { for (const c of mcp.clients) c.close(); };
@@ -666,6 +669,54 @@ async function main(): Promise<void> {
   });
   await nudge.init();
   nudge.start();
+
+  // 资产（PRD v0.4）：data/assets.json；每 6 小时后台刷新一次汇率与行情
+  const assets = new AssetsStore(path.join(DATA_ROOT, 'data'));
+  await assets.init();
+  if (DEMO) await seedDemoAssets(assets);
+  const refreshAssets = (): void => { void assets.refresh(new Date()).then((errs) => { if (errs.length) console.warn('[assets] 刷新：' + errs.slice(0, 3).join('；')); }); };
+  if (!DEMO) { refreshAssets(); setInterval(refreshAssets, 6 * 3600_000).unref?.(); }
+  async function syncBrokers(): Promise<string[]> {
+    const errs: string[] = [];
+    const c = assets.data.connectors;
+    if (c.ibkr) {
+      try {
+        const snap = await fetchIbkr((u, i) => fetch(u, i), c.ibkr.token, c.ibkr.queryId);
+        assets.data.accounts = mergeBroker(assets.data.accounts, 'ibkr', snap, Date.now());
+      } catch (e) { errs.push(e instanceof Error ? e.message : String(e)); }
+    }
+    if (c.moomoo) {
+      const client = mcp.clients.find((x) => x.name === c.moomoo?.server);
+      if (!client || !client.isConnected) errs.push(`moomoo：没有连上名为「${c.moomoo.server}」的 MCP server（见 docs/ASSETS-SETUP.md）`);
+      else {
+        try {
+          const snap = await fetchMoomoo(client, c.moomoo.trdEnv, c.moomoo.accId);
+          assets.data.accounts = mergeBroker(assets.data.accounts, 'moomoo', snap, Date.now());
+        } catch (e) { errs.push('moomoo：' + (e instanceof Error ? e.message : String(e))); }
+      }
+    }
+    await assets.save();
+    return errs;
+  }
+  pipeline.register({
+    name: 'assets_summary',
+    desc: '只读：用户的资产总览（按账户 / 类型 / 币种，折算成用户选的主币种）、近几个月快照、30 天内到期的定期。回答"我有多少钱 / 储蓄目标进度 / 资产分布"时用。不能修改资产',
+    params: {},
+    risk: 1,
+    handler: async () => {
+      const v = await assets.valuation(new Date());
+      return {
+        base: v.base,
+        total: Math.round(v.total * 100) / 100,
+        complete: v.complete,
+        missing: v.missing.slice(0, 5),
+        byKind: v.byKind,
+        accounts: v.accounts.map((a) => ({ name: a.name, kind: a.kind, currency: a.currency, value: a.value, valueBase: a.valueBase, holdings: a.holdings.slice(0, 10).map((h) => ({ symbol: h.symbol, qty: h.qty, value: h.value, currency: h.currency })) })),
+        snapshots: assets.data.snapshots.slice(-6),
+        maturing: maturing(assets.data.accounts, new Date()),
+      };
+    },
+  });
   pipeline.register({
     name: 'nudge_checkin',
     desc: '约一个回访：afterMin 分钟后在网页（和用户配置的手机渠道）问用户一句 message。用于用户说"先躺会儿/等下再做/我在路上"等场景，帮他按承诺回来做事。只约用户同意的回访',
@@ -1019,6 +1070,62 @@ async function main(): Promise<void> {
         } catch (e) {
           sendJson(res, 502, { ok: false, error: e instanceof Error ? e.message : String(e), sync: syncInfo() });
         }
+        return;
+      }
+
+      // ---- 资产 ----
+      const assetsPayload = async (extra: Record<string, unknown> = {}): Promise<Record<string, unknown>> => ({
+        baseCurrency: assets.data.baseCurrency,
+        accounts: assets.data.accounts,
+        valuation: await assets.valuation(new Date()),
+        snapshots: assets.data.snapshots,
+        maturing: maturing(assets.data.accounts, new Date()),
+        connectors: { ...assets.connectorView(), moomooServers: mcp.clients.filter((c) => c.tools.some((x) => x.name === 'get_positions')).map((c) => c.name) },
+        ...extra,
+      });
+      if (p === '/api/assets' && req.method === 'GET') {
+        sendJson(res, 200, await assetsPayload());
+        return;
+      }
+      if (p === '/api/assets' && req.method === 'PUT') {
+        const body = JSON.parse((await readBody(req, 512 * 1024)).toString('utf8')) as { accounts?: unknown; baseCurrency?: unknown };
+        if (Array.isArray(body.accounts)) {
+          assets.data.accounts = body.accounts.slice(0, 200).map((a, i) => normalizeAccount(a, i)).filter((a): a is Account => !!a);
+        }
+        if (typeof body.baseCurrency === 'string' && /^[A-Z]{3}$/.test(body.baseCurrency)) assets.data.baseCurrency = body.baseCurrency;
+        await assets.save();
+        const errs = await assets.refresh(new Date());
+        sendJson(res, 200, await assetsPayload({ errors: errs }));
+        return;
+      }
+      if (p === '/api/assets/refresh' && req.method === 'POST') {
+        const errs = await assets.refresh(new Date(), true);
+        sendJson(res, 200, await assetsPayload({ errors: errs }));
+        return;
+      }
+      if (p === '/api/assets/sync' && req.method === 'POST') {
+        const errs = await syncBrokers();
+        errs.push(...await assets.refresh(new Date()));
+        sendJson(res, 200, await assetsPayload({ errors: errs }));
+        return;
+      }
+      if (p === '/api/assets/connectors' && req.method === 'PUT') {
+        const body = JSON.parse((await readBody(req, 8192)).toString('utf8')) as { ibkr?: { token?: unknown; queryId?: unknown } | null; moomoo?: { server?: unknown; trdEnv?: unknown; accId?: unknown } | null };
+        const c = assets.data.connectors;
+        if (body.ibkr === null) delete c.ibkr;
+        else if (body.ibkr) {
+          const token = typeof body.ibkr.token === 'string' && body.ibkr.token.trim() ? body.ibkr.token.trim() : c.ibkr?.token ?? '';
+          const queryId = typeof body.ibkr.queryId === 'string' ? body.ibkr.queryId.trim() : '';
+          if (!/^\d{6,30}$/.test(token) || !/^\d{3,20}$/.test(queryId)) { sendJson(res, 400, { error: 'IBKR token 和查询号都应是数字' }); return; }
+          c.ibkr = { token, queryId };
+        }
+        if (body.moomoo === null) delete c.moomoo;
+        else if (body.moomoo) {
+          const server = typeof body.moomoo.server === 'string' && /^[\w-]{1,40}$/.test(body.moomoo.server) ? body.moomoo.server : 'moomoo';
+          c.moomoo = { server, trdEnv: body.moomoo.trdEnv === 'SIMULATE' ? 'SIMULATE' : 'REAL', ...(typeof body.moomoo.accId === 'string' && /^\d{1,30}$/.test(body.moomoo.accId) ? { accId: body.moomoo.accId } : {}) };
+        }
+        await assets.save();
+        sendJson(res, 200, await assetsPayload());
         return;
       }
 

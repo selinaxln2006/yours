@@ -5,6 +5,7 @@
 // 数据落在临时目录并预置示例数据，不碰用户真实的 paa/data。
 // ============================================================
 
+import type { AssetsStore } from './assets.ts';
 import type { ChatMessage, ToolCall } from '../core/types.ts';
 import type { ChatOptions, LLMAdapter, StreamCallbacks } from '../core/llm-adapter.ts';
 import type { LifeStore } from '../core/life-store.ts';
@@ -236,4 +237,33 @@ export async function seedDemoData(store: LifeStore): Promise<void> {
       { id: 'demo-g1', title: '期末前体重到 55kg', type: 'weight', target: 55, startValue: 57.4, endDate: d(60), createdAt: Date.now(), status: 'active', milestones: [] },
     ];
   }, { source: 'demo' });
+}
+
+/** 演示用资产：多币种账户 + 持仓；汇率与行情预置为今天，演示时不联网 */
+export async function seedDemoAssets(store: AssetsStore): Promise<void> {
+  const now = Date.now();
+  store.data.baseCurrency = 'SGD';
+  store.data.accounts = [
+    { id: 'demo-a1', name: 'DBS 储蓄', kind: 'bank', currency: 'SGD', balance: 8200 },
+    { id: 'demo-a2', name: '招行一卡通', kind: 'bank', currency: 'CNY', balance: 15600 },
+    { id: 'demo-a3', name: 'OCBC 定期 6 个月', kind: 'deposit', currency: 'SGD', balance: 10000, rate: 2.6, maturity: dayOffset(18) },
+    { id: 'demo-a4', name: 'moomoo', kind: 'broker', currency: 'USD', balance: 420, holdings: [
+      { symbol: 'AAPL', qty: 12, name: 'Apple' }, { symbol: 'VOO', qty: 3, name: 'Vanguard S&P 500 ETF' }, { symbol: '0700.HK', qty: 100, name: '腾讯控股' },
+    ] },
+    { id: 'demo-a5', name: '微信零钱', kind: 'wallet', currency: 'CNY', balance: 860 },
+  ];
+  store.data.fx = { date: dayOffset(0), at: now, perEur: { EUR: 1, USD: 1.12, SGD: 1.44, CNY: 7.53, HKD: 8.81, JPY: 165 } };
+  store.data.quotes = {
+    AAPL: { price: 231.5, currency: 'USD', at: now },
+    VOO: { price: 545.2, currency: 'USD', at: now },
+    '0700.HK': { price: 421.2, currency: 'HKD', at: now },
+  };
+  const m = (k: number): string => { const d = new Date(); d.setMonth(d.getMonth() - k); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
+  store.data.snapshots = [
+    { month: m(4), date: `${m(4)}-28`, base: 'SGD', total: 48200, byKind: {} },
+    { month: m(3), date: `${m(3)}-28`, base: 'SGD', total: 49650, byKind: {} },
+    { month: m(2), date: `${m(2)}-28`, base: 'SGD', total: 51100, byKind: {} },
+    { month: m(1), date: `${m(1)}-28`, base: 'SGD', total: 50380, byKind: {} },
+  ];
+  await store.save();
 }
