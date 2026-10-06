@@ -38,16 +38,14 @@ test('简报内容：今天的承诺、逾期、建议数；日程只在网页�
   ];
   const m = briefMessage(todos, today, ['10:00 概率论', '15:00 组会']);
   assert.equal(m.kind, 'brief');
-  assert.match(m.body, /今天 2 件承诺：「复习」「写报告」/);
-  assert.match(m.body, /之前还剩 1 件没做（「投简历」）/);
-  assert.match(m.body, /有 1 条建议/);
-  assert.match(m.body, /日程 2 项/);
+  assert.equal(m.title, '早上好');
+  assert.equal(m.body, '今天要做：「复习」「写报告」。之前还有 1 件没做完：「投简历」。另外有 1 条建议可以挑。今天有 2 项日程。');
   assert.doesNotMatch(m.body, /组会/);
   assert.deepEqual(m.detail, ['10:00 概率论', '15:00 组会']);
   const req = buildRequest({ type: 'webhook', url: 'https://example.com/h' }, m);
   assert.ok(req);
   const empty = briefMessage([], today);
-  assert.match(empty.body, /今天还没有承诺。要不要和 Yours 聊聊/);
+  assert.equal(empty.body, '今天还没定要做什么。想好了可以和 Yours 说一声。');
 });
 
 test('晚间回顾：都做完了 / 点过今天算了 → 问一句今天怎么样；还有没做完的交给晚间检查', () => {
@@ -58,8 +56,8 @@ test('晚间回顾：都做完了 / 点过今天算了 → 问一句今天怎么
   assert.ok(shouldRecap(cfg, { ...st, snoozed: true }, 2, at(21, 5)));
   assert.ok(!shouldRecap(cfg, { ...st, eveningSent: true }, 0, at(21, 5)));
   assert.ok(!shouldRecap(cfg, st, 0, at(20, 59)));
-  assert.match(recapMessage(3).body, /今天的 3 件都做完了。一句话回顾/);
-  assert.equal(recapMessage(0).body, '一句话回顾一下今天？');
+  assert.equal(recapMessage(3).body, '今天定的 3 件事都做完了。今天感觉怎么样？');
+  assert.equal(recapMessage(0).body, '今天感觉怎么样？');
 });
 
 test('效果记录：60 分钟内做完 = done；改到以后 = postponed；超时 = ignored；简报不算', () => {
@@ -88,7 +86,7 @@ test('效果记录：60 分钟内做完 = done；改到以后 = postponed；超�
 
 test('效果统计：按时段 / 星期 / 种类；样本少就说看不出来', () => {
   const now = at(12, 0, 28).getTime();
-  assert.match(nudgeInsights(nudgeStats([], now))[0], /还看不出规律/);
+  assert.match(nudgeInsights(nudgeStats([], now))[0], /提醒记录还太少（0 次）/);
   const log: NudgeRecord[] = [];
   for (let d = 1; d <= 8; d++) {
     log.push({ id: `e${d}`, at: at(18, 30, d).getTime(), kind: 'arrive', todoIds: [], outcome: d % 4 ? 'done' : 'ignored' });
@@ -104,9 +102,9 @@ test('效果统计：按时段 / 星期 / 种类；样本少就说看不出来',
   assert.equal(s.bySlot.evening?.n, 8);
   assert.equal(slotOf(at(22)), 'night');
   const ins = nudgeInsights(s);
-  assert.match(ins[0], /提醒 17 次，之后 1 小时内动手的 6 次（35%）/);
-  assert.ok(ins.some((x) => /傍晚（17–21 点）的提醒最管用（6\/8），晚上（21 点后）的基本没用（0\/9）/.test(x)), ins.join('\n'));
-  assert.ok(ins.some((x) => /跟进提醒很少起作用/.test(x)));
+  assert.equal(ins[0], '最近四周提醒了你 17 次，其中 6 次你在一小时内去做了。');
+  assert.ok(ins.includes('傍晚的提醒最管用，8 次里有 6 次去做了；晚上 9 点以后的提醒，9 次都没起作用。'), ins.join('\n'));
+  assert.ok(ins.includes('第一次提醒之后的跟进提醒，9 次都没用，可以考虑少发几次。'), ins.join('\n'));
 });
 
 test('NudgeEngine：发提醒时记一笔、卡片回报结果、今天算了批量记 snoozed、记录落盘', async () => {
@@ -155,7 +153,10 @@ test('目标进度：体重（方向自动）、速度、预计到达、落后�
   assert.equal(p.status, 'ahead');
   assert.ok(p.pacePerWeek! > 0.2 && p.pacePerWeek! < 0.4, String(p.pacePerWeek));
   assert.ok(p.eta && p.eta > '2026-11-30' && p.eta < '2027-01-31', String(p.eta));
-  assert.match(progressText(p), /体重记录 56.8kg，目标 55kg，进度 40%，按时间应到 32%，领先于计划，最近每周前进/);
+  assert.equal(p.say?.now, '现在 56.8 kg，还差 1.8 kg');
+  assert.equal(p.say?.plan, '比计划快');
+  assert.match(p.say!.eta, /^最近每周减 0\.\d+ kg，照这个速度 1[12]月\d+日 前后能到$/);
+  assert.match(progressText(p), /^体重记录：现在 56.8 kg，还差 1.8 kg；比计划快；最近每周减/);
   // 增重目标方向反过来
   const up = goalProgress({ id: 'u', type: 'weight', target: 60, startVal: 50 }, { weights: [{ date: '2026-10-30', weight: 55 }] }, now);
   assert.equal(up.pct, 0.5);
@@ -171,6 +172,9 @@ test('目标进度：储蓄读资产总额序列（起点取开始日之前最�
   assert.equal(p.cur, 31500);
   assert.equal(p.unit, 'SGD');
   assert.equal(p.status, 'behind');
+  assert.equal(p.say?.now, '现在 S$31,500，还差 S$8,500');
+  assert.match(p.say!.plan, /^比计划慢，按截止日算，这时候该到 S\$3\d,\d{3} 左右$/);
+  assert.match(p.say!.eta, /^最近每周多存 S\$1\d\d，照这个速度要到 2028年\d+月\d+日 才能到，比截止日（2027年1月31日）晚$/);
   assert.ok(p.pacePerWeek! > 100 && p.pacePerWeek! < 130);
   // 没建资产账户 → 兜底用投资记录
   const fb = goalProgress({ id: 's', type: 'saving', target: 1000 }, { investmentsTotal: 250 }, now);
@@ -186,9 +190,11 @@ test('目标进度：习惯算连续天数（今天没打卡不算断）；自�
   const h = goalProgress({ id: 'h', type: 'habit', target: 8, habitField: 'meditation' }, { habits: { meditation: dates } }, now);
   assert.equal(h.cur, 4);
   assert.equal(h.pct, 0.5);
-  const c = goalProgress({ id: 'c', type: 'custom', target: 60, current: 18, startDate: '2026-10-09', endDate: '2026-12-18' }, {}, now);
+  const c = goalProgress({ id: 'c', type: 'custom', target: 60, unit: '道', current: 18, startDate: '2026-10-09', endDate: '2026-12-18' }, {}, now);
   assert.equal(c.pct, 0.3);
   assert.equal(c.status, 'on');
+  assert.equal(c.say?.now, '做到 18 / 60 道');
+  assert.equal(c.say?.plan, '进度正常');
   assert.equal(goalProgress({ id: 'c', type: 'custom', target: 60 }, {}, now).pct, null);
   assert.equal(slopePerDay([{ date: '2026-10-01', value: 1 }, { date: '2026-10-03', value: 2 }]), null, '跨度不够');
 });

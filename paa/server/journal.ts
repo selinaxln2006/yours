@@ -9,7 +9,7 @@ import path from 'node:path';
 export type Mood = 'good' | 'ok' | 'bad';
 export interface JournalEntry { date: string; mood: Mood; note: string; at: number }
 
-export const MOOD_ZH: Record<Mood, string> = { good: '顺', ok: '一般', bad: '累' };
+export const MOOD_ZH: Record<Mood, string> = { good: '不错', ok: '一般', bad: '很累' };
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 export function normalizeEntry(raw: unknown, date: string, now: number): JournalEntry | null {

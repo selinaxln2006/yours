@@ -186,8 +186,8 @@ export function shouldRecap(cfg: NudgeConfig, st: NudgeState, pendingCount: numb
 
 export function recapMessage(doneToday: number): NudgeMessage {
   return {
-    title: '今天怎么样',
-    body: (doneToday ? `今天的 ${doneToday} 件都做完了。` : '') + '一句话回顾一下今天？',
+    title: '今天过得怎么样',
+    body: (doneToday ? `今天定的 ${doneToday} 件事都做完了。` : '') + '今天感觉怎么样？',
     urgent: false,
     todos: [],
     kind: 'recap',
@@ -212,13 +212,13 @@ export function briefMessage(todos: TodoLike[], today: string, events: string[] 
   const sug = open.filter((t) => t.plan === 'suggested' && t.dueDate === today);
   const q = (xs: TodoLike[], n: number): string => xs.slice(0, n).map((t) => `「${String(t.title ?? '').slice(0, 30)}」`).join('');
   const parts: string[] = [];
-  parts.push(todayC.length ? `今天 ${todayC.length} 件承诺：${q(todayC, 3)}${todayC.length > 3 ? ' 等' : ''}。` : '今天还没有承诺。');
-  if (overdue.length) parts.push(`之前还剩 ${overdue.length} 件没做（${q(overdue, 1)}）。`);
-  if (sug.length) parts.push(`有 ${sug.length} 条建议可以挑，点 + 加入。`);
-  else if (!todayC.length) parts.push('要不要和 Yours 聊聊今天做什么？');
-  if (events.length) parts.push(`日程 ${events.length} 项。`);
+  parts.push(todayC.length ? `今天要做：${q(todayC, 3)}${todayC.length > 3 ? ` 等 ${todayC.length} 件` : ''}。` : '今天还没定要做什么。');
+  if (overdue.length) parts.push(`之前还有 ${overdue.length} 件没做完：${q(overdue, 1)}${overdue.length > 1 ? ' 等' : ''}。`);
+  if (sug.length) parts.push(`另外有 ${sug.length} 条建议可以挑。`);
+  else if (!todayC.length) parts.push('想好了可以和 Yours 说一声。');
+  if (events.length) parts.push(`今天有 ${events.length} 项日程。`);
   return {
-    title: '今天',
+    title: '早上好',
     body: parts.join(''),
     urgent: false,
     todos: [...todayC, ...overdue].map((t) => String(t.title ?? '')).filter(Boolean).slice(0, 5),

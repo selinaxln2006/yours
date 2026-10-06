@@ -53,8 +53,6 @@ export function resolveOutcomes(log: NudgeRecord[], todos: TodoState[], now: num
 }
 
 export type Slot = 'morning' | 'afternoon' | 'evening' | 'night';
-export const SLOT_ZH: Record<Slot, string> = { morning: '上午', afternoon: '下午', evening: '傍晚（17–21 点）', night: '晚上（21 点后）' };
-export const KIND_ZH: Record<NudgeKind, string> = { arrive: '到家第一次提醒', follow: '跟进提醒', evening: '晚间检查', checkin: '对话里约的回访', brief: '早间简报', recap: '晚间回顾' };
 const WD_ZH = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 
 export function slotOf(d: Date): Slot {
@@ -97,28 +95,26 @@ export function nudgeStats(log: NudgeRecord[], now: number, days = 28): NudgeSta
   return s;
 }
 
-const pc = (b: Bucket): number => Math.round((b.acted / b.n) * 100);
+const times = (b: Bucket): string => (b.acted === b.n ? `${b.n} 次都去做了` : b.acted === 0 ? `${b.n} 次一次都没去做` : `${b.n} 次里有 ${b.acted} 次去做了`);
+const SLOT_SAY: Record<Slot, string> = { morning: '上午', afternoon: '下午', evening: '傍晚', night: '晚上 9 点以后' };
 
-/** 给人看、也给模型看的几句结论；样本不够就直说 */
+/** 给人看、也给模型看的几句话；样本不够就直说 */
 export function nudgeInsights(s: NudgeStats, minN = 3): string[] {
-  if (s.total.n < 5) return [`最近 ${s.days} 天有结果的提醒只有 ${s.total.n} 次，还看不出规律`];
-  const out = [`最近 ${s.days} 天提醒 ${s.total.n} 次，之后 1 小时内动手的 ${s.total.acted} 次（${pc(s.total)}%）`];
-  const ranked = (m: Partial<Record<string, Bucket>>, zh: (k: string) => string) =>
-    Object.entries(m).filter(([, b]) => b && b.n >= minN).map(([k, b]) => ({ k: zh(k), b: b!, r: b!.acted / b!.n })).sort((a, b) => b.r - a.r);
-  const slots = ranked(s.bySlot, (k) => SLOT_ZH[k as Slot]);
+  if (s.total.n < 5) return [`提醒记录还太少（${s.total.n} 次），再用一两周才看得出哪种提醒对你管用。`];
+  const out = [`最近四周提醒了你 ${s.total.n} 次，其中 ${s.total.acted} 次你在一小时内去做了。`];
+  const ranked = (m: Partial<Record<string, Bucket>>) =>
+    Object.entries(m).filter(([, b]) => b && b.n >= minN).map(([k, b]) => ({ k, b: b!, r: b!.acted / b!.n })).sort((a, b) => b.r - a.r);
+  const slots = ranked(s.bySlot);
   if (slots.length >= 2 && slots[0].r - slots[slots.length - 1].r >= 0.25) {
     const hi = slots[0], lo = slots[slots.length - 1];
-    out.push(`${hi.k}的提醒最管用（${hi.b.acted}/${hi.b.n}），${lo.k}的基本没用（${lo.b.acted}/${lo.b.n}）`);
+    out.push(`${SLOT_SAY[hi.k as Slot]}的提醒最管用，${times(hi.b)}；${SLOT_SAY[lo.k as Slot]}的提醒，${lo.b.acted ? `${lo.b.n} 次里只有 ${lo.b.acted} 次` : `${lo.b.n} 次都没起作用`}。`);
   }
-  const wds = ranked(s.byWeekday, (k) => k);
-  const bad = wds.filter((w) => w.r === 0 && w.b.n >= minN).map((w) => w.k);
-  if (bad.length) out.push(`${bad.join('、')}的提醒一次都没用上`);
-  const first = s.byKind.arrive, fol = s.byKind.follow;
-  if (first && fol && first.n >= minN && fol.n >= minN && fol.acted / fol.n < 0.15) {
-    out.push(`跟进提醒很少起作用（${fol.acted}/${fol.n}），可以考虑改成温和档或减少次数`);
-  }
+  const bad = ranked(s.byWeekday).filter((w) => w.r === 0).map((w) => w.k);
+  if (bad.length) out.push(`${bad.join('、')}的提醒一次都没起作用。`);
+  const fol = s.byKind.follow;
+  if (fol && fol.n >= minN && fol.acted / fol.n < 0.15) out.push(`第一次提醒之后的跟进提醒，${fol.acted ? `${fol.n} 次里只有 ${fol.acted} 次有用` : `${fol.n} 次都没用`}，可以考虑少发几次。`);
   const ck = s.byKind.checkin;
-  if (ck && ck.n >= minN) out.push(`对话里约的回访：${ck.acted}/${ck.n} 次动手了`);
-  if (s.total.snoozed >= Math.max(3, s.total.n * 0.4)) out.push(`「今天算了」点了 ${s.total.snoozed} 次，可能提醒太多，或承诺定得太满`);
+  if (ck && ck.n >= minN) out.push(`你在对话里约的回访，${times(ck)}。`);
+  if (s.total.snoozed >= Math.max(3, s.total.n * 0.4)) out.push(`「今天算了」点了 ${s.total.snoozed} 次，可能是提醒太多，或者一天排得太满。`);
   return out;
 }

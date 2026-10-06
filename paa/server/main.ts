@@ -1216,7 +1216,8 @@ async function main(): Promise<void> {
             now,
           ),
           progress: progress.map((x) => ({ ...x, text: progressText(x) })),
-          spending: spendingWeek((lifeStore.get('transactions') as Array<Record<string, unknown>> | undefined) ?? [], now),
+          // 记账没有币种；建了资产账户就用主币种显示
+          spending: { ...spendingWeek((lifeStore.get('transactions') as Array<Record<string, unknown>> | undefined) ?? [], now), currency: assets.data.accounts.length ? assets.data.baseCurrency : '' },
           moods: journal.range(ymd(lwFrom), ymd(lwTo)),
           nudge: nudge.stats(now.getTime()),
         });

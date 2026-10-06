@@ -55,6 +55,8 @@ export interface GoalProgress {
   pacePerWeek: number | null;
   /** 照最近速度，预计哪天到 */
   eta: string | null;
+  /** 给人看的话：now = 现在到哪了；plan = 和计划比；eta = 照这个速度哪天到 */
+  say?: { now: string; plan: string; eta: string };
 }
 
 const DAY = 86_400_000;
@@ -138,7 +140,7 @@ function paceAndEta(series: Point[], cur: number, target: number, start: number,
   return { pace, eta: days <= 3 * 365 ? addDaysStr(now, days) : null };
 }
 
-export function goalProgress(g: GoalInput, d: GoalData, now: Date): GoalProgress {
+function rawProgress(g: GoalInput, d: GoalData, now: Date): GoalProgress {
   const target = Number(g.target) || 0;
   const base: GoalProgress = { goalId: String(g.id ?? ''), source: '手动记录', cur: null, start: null, target, unit: g.unit ?? '', pct: null, expectedPct: expected(g, now), status: 'unknown', pacePerWeek: null, eta: null };
   const sd = startDay(g);
@@ -189,17 +191,66 @@ export function goalProgress(g: GoalInput, d: GoalData, now: Date): GoalProgress
   return base;
 }
 
-const STATUS_ZH: Record<GoalStatus, string> = { done: '已达成', ahead: '领先于计划', on: '按计划', behind: '落后于计划', unknown: '' };
+// ---- 说人话 ----
+
+export const CCY_SYM: Record<string, string> = { SGD: 'S$', USD: '$', CNY: '¥', HKD: 'HK$', EUR: '€', GBP: '£', JPY: '¥', AUD: 'A$', MYR: 'RM' };
+
+/** 数值 + 单位：S$34,447 / 56.8 kg / 18 道 */
+export function fmtVal(v: number, unit: string): string {
+  const n = Math.abs(v) >= 1000 ? Math.round(v).toLocaleString('en-US') : Math.abs(v) < 1 ? String(Math.round(v * 100) / 100) : String(Math.round(v * 10) / 10);
+  if (CCY_SYM[unit]) return (v < 0 ? '-' : '') + CCY_SYM[unit] + n.replace(/^-/, '');
+  return unit ? `${n} ${unit}` : n;
+}
+
+/** 2026-11-27 → 11月27日；跨年带上年份 */
+export function fmtDay(s: string, now: Date): string {
+  const [y, m, d] = s.split('-').map(Number);
+  return `${y !== now.getFullYear() ? y + '年' : ''}${m}月${d}日`;
+}
+
+function say(p: GoalProgress, g: GoalInput, now: Date): GoalProgress['say'] {
+  if (p.pct === null || p.cur === null) return undefined;
+  const u = p.unit, v = (x: number) => fmtVal(x, u);
+  const kind = g.type ?? 'custom';
+  if (p.status === 'done') return { now: `已经到了：${v(p.cur)}，目标是 ${v(p.target)}`, plan: '已达成', eta: '' };
+  let nowS: string;
+  if (kind === 'habit') nowS = `已经连续 ${p.cur} 天，目标 ${p.target} 天`;
+  else if (kind === 'custom') nowS = `做到 ${Math.round(p.cur * 10) / 10} / ${v(p.target)}`;
+  else nowS = `现在 ${v(p.cur)}，还差 ${v(Math.abs(p.target - p.cur))}`;
+  let plan = '';
+  if (p.status === 'on') plan = '进度正常';
+  else if (p.status === 'ahead') plan = '比计划快';
+  else if (p.status === 'behind') {
+    plan = '比计划慢';
+    if (p.expectedPct !== null && p.start !== null && kind !== 'habit') {
+      const exp = p.start + (p.target - p.start) * p.expectedPct;
+      plan += `，按截止日算，这时候该到 ${v(exp)} 左右`;
+    }
+  }
+  let eta = '';
+  if (p.pacePerWeek !== null) {
+    const down = p.target < (p.start ?? p.target);
+    const verb = kind === 'saving' ? (p.pacePerWeek >= 0 ? '多存' : '少了') : down ? (p.pacePerWeek >= 0 ? '减' : '涨') : (p.pacePerWeek >= 0 ? '增加' : '减少');
+    const pace = `最近每周${verb} ${v(Math.abs(p.pacePerWeek))}`;
+    if (p.pacePerWeek <= 0) eta = `${pace}，照这样到不了`;
+    else if (p.eta) {
+      const late = g.endDate && p.eta > g.endDate;
+      eta = `${pace}，照这个速度${late ? '要到' : ''} ${fmtDay(p.eta, now)}${late ? ` 才能到，比截止日（${fmtDay(g.endDate!, now)}）晚` : ' 前后能到'}`;
+    } else eta = `${pace}，照这个速度三年内到不了`;
+  }
+  return { now: nowS, plan, eta };
+}
+
+export function goalProgress(g: GoalInput, d: GoalData, now: Date): GoalProgress {
+  const p = rawProgress(g, d, now);
+  const s = say(p, g, now);
+  return s ? { ...p, say: s } : p;
+}
 
 /** 给模型看的一句话 */
 export function progressText(p: GoalProgress): string {
-  if (p.pct === null || p.cur === null) return '';
-  const parts = [`${p.source} ${p.cur}${p.unit}，目标 ${p.target}${p.unit}，进度 ${Math.round(p.pct * 100)}%`];
-  if (p.expectedPct !== null && p.status !== 'done') parts.push(`按时间应到 ${Math.round(p.expectedPct * 100)}%`);
-  if (STATUS_ZH[p.status]) parts.push(STATUS_ZH[p.status]);
-  if (p.pacePerWeek !== null) parts.push(`最近每周${p.pacePerWeek >= 0 ? '前进' : '倒退'} ${Math.abs(p.pacePerWeek)}${p.unit}`);
-  if (p.eta && p.status !== 'done') parts.push(`照这个速度 ${p.eta} 到`);
-  return parts.join('，');
+  if (!p.say) return '';
+  return [`${p.source}：${p.say.now}`, p.say.plan, p.say.eta].filter(Boolean).join('；');
 }
 
 // ---- 支出：上周 vs 前 4 周平均 ----
