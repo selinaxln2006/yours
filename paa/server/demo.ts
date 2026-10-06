@@ -6,6 +6,8 @@
 // ============================================================
 
 import type { AssetsStore } from './assets.ts';
+import type { NudgeRecord } from './nudge-log.ts';
+import type { JournalEntry } from './journal.ts';
 import type { ChatMessage, ToolCall } from '../core/types.ts';
 import type { ChatOptions, LLMAdapter, StreamCallbacks } from '../core/llm-adapter.ts';
 import type { LifeStore } from '../core/life-store.ts';
@@ -210,12 +212,22 @@ export async function seedDemoData(store: LifeStore): Promise<void> {
       { date: d(0), name: '燕麦酸奶', calories: 330, mealType: 'breakfast' },
       { date: d(-1), name: '鸡胸肉沙拉', calories: 420, mealType: 'lunch' },
     ];
+    // 前几周每周餐饮 ~60、交通 ~15；上周外卖明显多（周复盘里会指出来）
+    const back = lastWeekBack();
+    const hist: Array<Record<string, unknown>> = [];
+    for (let k = back + 8; k <= back + 34; k += 3) {
+      hist.push({ id: `demo-h${k}`, date: d(-k), type: 'expense', amount: 26, category: '餐饮', note: '' });
+      if (k % 2) hist.push({ id: `demo-m${k}`, date: d(-k), type: 'expense', amount: 7, category: '交通', note: 'MRT' });
+    }
+    for (const k of [1, 2, 4, 5, 6]) hist.push({ id: `demo-w${k}`, date: d(-back - 7 + k), type: 'expense', amount: 24, category: '外卖', note: 'foodpanda' });
+    hist.push({ id: 'demo-w0', date: d(-back - 6), type: 'expense', amount: 30, category: '餐饮', note: '' });
     w.transactions = [
+      ...hist,
       { id: 'demo-t1', date: d(0), type: 'expense', amount: 6.5, category: '餐饮', note: '早餐' },
       { id: 'demo-t2', date: d(0), type: 'expense', amount: 2.1, category: '交通', note: 'MRT' },
       { id: 'demo-t3', date: d(-1), type: 'expense', amount: 18, category: '学习', note: '教材' },
     ];
-    w.weights = [{ date: d(-14), weight: 57.4 }, { date: d(-7), weight: 57 }, { date: d(0), weight: 56.6 }];
+    w.weights = [{ date: d(-28), weight: 57.8 }, { date: d(-21), weight: 57.4 }, { date: d(-14), weight: 57.3 }, { date: d(-7), weight: 57 }, { date: d(0), weight: 56.8 }];
     w.exerciseLog = [{ date: d(-1), name: '游泳', duration: 40, calories: 320 }, { date: d(-3), name: '网球', duration: 60, calories: 420 }];
     w.schedule = [
       { id: 'demo-s1', title: '概率论', date: d(0), startTime: '10:00', endTime: '12:00', category: 'study', rrule: 'none' },
@@ -233,10 +245,43 @@ export async function seedDemoData(store: LifeStore): Promise<void> {
       { id: 'demo-p3', title: '用 Python 实现一次蒙特卡洛定价', priority: 'mid', done: false, dueDate: d(1), plan: 'suggested', goalId: 'demo-g2' },
     ];
     w.goals = [
-      { id: 'demo-g2', title: '学期末前准备好量化实习面试', type: 'custom', target: 1, unit: '', endDate: d(70), createdAt: Date.now(), status: 'active', milestones: [] },
-      { id: 'demo-g1', title: '期末前体重到 55kg', type: 'weight', target: 55, startValue: 57.4, endDate: d(60), createdAt: Date.now(), status: 'active', milestones: [] },
+      { id: 'demo-g2', title: '学期末前刷完 60 道量化面试题', type: 'custom', target: 60, unit: '道', current: 18, startVal: 0, startDate: d(-21), endDate: d(49), createdAt: Date.now(), status: 'active', milestones: [] },
+      { id: 'demo-g1', title: '期末前体重到 55kg', type: 'weight', target: 55, startVal: 57.8, startDate: d(-28), endDate: d(60), createdAt: Date.now(), status: 'active', milestones: [] },
+      { id: 'demo-g3', title: '年底前存到 S$40,000', type: 'saving', target: 40000, unit: 'SGD', startDate: d(-100), endDate: d(90), createdAt: Date.now(), status: 'active', milestones: [] },
     ];
   }, { source: 'demo' });
+}
+
+/** 今天离上周日多少天（上周 = 本周一往前 7 天） */
+function lastWeekBack(now = new Date()): number {
+  return ((now.getDay() + 6) % 7) + 1;
+}
+
+/** 演示用提醒效果记录：傍晚到家的提醒常有用，21 点后的基本没用，周三全没用 */
+export function demoNudgeLog(now = new Date()): NudgeRecord[] {
+  const out: NudgeRecord[] = [];
+  const at = (daysAgo: number, h: number, m = 0): number => { const x = new Date(now); x.setDate(x.getDate() - daysAgo); x.setHours(h, m, 0, 0); return x.getTime(); };
+  let i = 0;
+  for (let k = 1; k <= 24; k++) {
+    const t = new Date(at(k, 12));
+    if (t.getDay() === 3) {
+      out.push({ id: `dn${i++}`, at: at(k, 18, 40), kind: 'arrive', todoIds: [], outcome: 'ignored', outcomeAt: at(k, 19, 41) });
+      continue;
+    }
+    if (k % 2 === 0) out.push({ id: `dn${i++}`, at: at(k, 18, 30), kind: 'arrive', todoIds: [], outcome: k % 6 === 0 ? 'postponed' : 'done', outcomeAt: at(k, 19) });
+    if (k % 3 === 0) out.push({ id: `dn${i++}`, at: at(k, 22, 10), kind: 'evening', todoIds: [], outcome: k % 9 === 0 ? 'done' : 'ignored', outcomeAt: at(k, 23, 11) });
+    if (k % 5 === 0) out.push({ id: `dn${i++}`, at: at(k, 15), kind: 'checkin', todoIds: [], outcome: 'started', outcomeAt: at(k, 15, 2) });
+  }
+  return out.sort((a, b) => a.at - b.at);
+}
+
+export function demoJournal(now = new Date()): JournalEntry[] {
+  const back = lastWeekBack(now);
+  const moods: JournalEntry['mood'][] = ['ok', 'good', 'bad', 'ok', 'good', 'good', 'ok'];
+  return moods.map((mood, k) => {
+    const x = new Date(now); x.setDate(x.getDate() - back - 6 + k);
+    return { date: dayOffset(0, x), mood, note: mood === 'bad' ? '课太多，回家就躺了' : '', at: x.getTime() };
+  });
 }
 
 /** 演示用资产：多币种账户 + 持仓；汇率与行情预置为今天，演示时不联网 */
