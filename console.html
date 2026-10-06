@@ -509,6 +509,15 @@ details.cmd.raw div{white-space:pre-wrap;margin-top:6px}
 .weekly .wt{font-family:var(--serif-zh);font-size:16px;line-height:1.85;margin:4px 0 10px}
 .weekly .wr{display:flex;gap:14px;align-items:baseline;padding:6px 0;border-top:1px solid var(--line);font-size:13px;color:var(--ink3)}
 .weekly .wr b{flex:1;font-weight:500;color:var(--ink);font-size:14px}
+.gprog{margin-top:10px}
+.gprog .gpl{display:flex;justify-content:space-between;font-size:12px;color:var(--ink3);margin-bottom:4px}
+.gprog .gpace{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:6px;font-size:12.5px;color:var(--ink3)}
+.chip.st-behind{color:var(--clay);border-color:color-mix(in srgb,var(--clay) 40%,transparent)}
+.chip.st-ahead,.chip.st-done{color:var(--sage);border-color:color-mix(in srgb,var(--sage) 40%,transparent)}
+.weekly .wp{font-size:12.5px}
+.weekly .wp.behind{color:var(--clay)}
+.weekly .wp.ahead,.weekly .wp.done{color:var(--sage)}
+.weekly .wnotes{margin-top:8px;padding-top:8px;border-top:1px solid var(--line);font-size:13px;line-height:1.8;color:var(--ink2)}
 .weekly .wb{display:flex;align-items:center;gap:14px;margin-top:12px}
 .memrow{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
 .memrow:last-child{border-bottom:none}
@@ -540,6 +549,13 @@ details.cmd.raw div{white-space:pre-wrap;margin-top:6px}
 .nudgecard p{font-family:var(--serif-zh);font-size:15px;line-height:1.8;margin:4px 0 10px}
 .nudgecard .nb{display:flex;align-items:center;gap:10px}
 .nudgecard .chip{margin-left:auto}
+.nstats{margin-top:14px;padding-top:12px;border-top:1px solid var(--line)}
+.nstats>b{font-weight:600;margin-right:8px}
+.nstats ul{margin:8px 0;padding-left:18px;line-height:1.8;font-size:13.5px}
+.nudgecard .ndetail{display:flex;flex-wrap:wrap;gap:6px;margin:-4px 0 10px}
+.nudgecard .ndetail span{font-size:12.5px;padding:3px 9px;border-radius:999px;background:color-mix(in srgb,var(--ink) 6%,transparent);color:var(--ink2)}
+.nudgecard .nb.mood{flex-wrap:wrap}
+.nudgecard .nb.mood input{flex:1;min-width:140px}
 .btn.sm{height:26px;padding:0 11px;border-radius:9px;font-size:12px}
 .linkbtn{border:none;background:none;padding:2px 0;font:italic 13px var(--serif-en);color:var(--clay);cursor:pointer;text-align:left}
 .linkbtn:hover{text-decoration:underline}
@@ -1303,7 +1319,7 @@ function handleWs(m){
       if (S.confirm && S.confirm.id === m.id){ S.confirm = null; clearInterval(S.confirmTimer); renderConfirm(); }
       toast('本次会话「' + toolView(m.tool, {}).title + '」不再询问'); break;
     case 'change':
-      fetchData(m.key); break;
+      S.goalProgAt = 0; fetchData(m.key); break;
     case 'heal':
       toast('数据文件损坏，已自动重建'); fetchData(); break;
     case 'nudge':
@@ -2350,8 +2366,26 @@ function genMilestones(g){
   }
   return ms;
 }
+/* 目标进度由 server 算（体重 / 资产总额 / 打卡 / 手动值），这里只取来显示 */
+function loadGoalProg(){
+  if (S._gpLoading) return; S._gpLoading = true;
+  fetch('/api/goals/progress').then(r => r.json()).then(j => {
+    S.goalProg = Object.fromEntries((j.progress || []).map(p => [p.goalId, p])); S.goalProgAt = Date.now();
+    if (S.v === 'panel' && S.tab === 'goals') renderPanel();
+  }).catch(() => {}).finally(() => { S._gpLoading = false; });
+}
+function setGoalCurrent(g){
+  openModal('记进度 · ' + (g.title || ''), [
+    {key:'current', label:'现在到了多少' + (g.unit ? '（' + g.unit + '）' : ''), type:'number', step:'0.1', value: g.current != null ? g.current : ''},
+  ], async (o) => {
+    if (o.current === '' || !Number.isFinite(+o.current)) return toast('填一个数字');
+    const arr = ((S.data || {}).goals || []).map(x => x.id === g.id ? Object.assign({}, x, { current: +o.current, currentAt: Date.now() }) : x);
+    try { await putData('goals', arr); toast('已记下'); } catch (e) { toast('失败：' + e.message); }
+  });
+}
 function pGoals(d){
   const f = document.createDocumentFragment();
+  if (!S.goalProgAt || Date.now() - S.goalProgAt > 20000) loadGoalProg();
   const goals = (d.goals||[]).filter(g=>g.status !== 'done');
   const act = document.createElement('div'); act.className='actbar';
   act.appendChild(actBtn('＋ 目标','创建新目标', () => {
@@ -2377,7 +2411,7 @@ function pGoals(d){
     return f;
   }
   for (const g of goals){
-    const c = card();
+    const c = card(); c.classList.add('goal');
     const gh = document.createElement('div'); gh.className='ghead';
     const gt = document.createElement('span'); gt.className='gt'; gt.textContent = g.title||'未命名目标';
     const gm = document.createElement('span'); gm.className='gmeta';
@@ -2423,19 +2457,36 @@ function pGoals(d){
       }
       c.appendChild(box);
     }
-    const gp = goalProgress(d, g);
+    const sp = (S.goalProg || {})[g.id];
+    const gp = sp && sp.pct != null ? sp : goalProgress(d, g);
     if (gp){
-      const pc = document.createElement('div'); pc.style.cssText='margin-top:8px';
-      const lbl = document.createElement('div'); lbl.style.cssText='display:flex;justify-content:space-between;font-size:11px;color:var(--text2);font-family:var(--disp)';
-      const l1 = document.createElement('span'); l1.textContent = '当前 ' + (gp.cur!=null?gp.cur:'—');
+      const pc = document.createElement('div'); pc.className = 'gprog';
+      const lbl = document.createElement('div'); lbl.className = 'gpl';
+      const un = gp.unit || g.unit || '';
+      const l1 = document.createElement('span'); l1.textContent = '当前 ' + (gp.cur != null ? (+gp.cur).toLocaleString() : '—') + (/^[A-Za-z]/.test(un) ? ' ' : '') + un + (gp.source ? ' · ' + gp.source : '');
       const l2 = document.createElement('span'); l2.textContent = Math.round((gp.pct||0)*100) + '%';
       lbl.appendChild(l1); lbl.appendChild(l2); pc.appendChild(lbl);
       pc.appendChild(progressBar(gp.pct||0, (gp.pct||0)>=1?'good':''));
+      if (sp){
+        const bits = [];
+        if (sp.expectedPct != null && sp.status !== 'done') bits.push('按时间应到 ' + Math.round(sp.expectedPct * 100) + '%');
+        if (sp.pacePerWeek != null) bits.push('最近每周' + (sp.pacePerWeek >= 0 ? '前进 ' : '倒退 ') + Math.abs(sp.pacePerWeek).toLocaleString() + (/^[A-Za-z]/.test(sp.unit || '') ? ' ' : '') + (sp.unit || ''));
+        if (sp.eta && sp.status !== 'done') bits.push('照这个速度 ' + sp.eta + ' 到');
+        if (bits.length || GSTATUS[sp.status]){
+          const ln = document.createElement('div'); ln.className = 'gpace';
+          if (GSTATUS[sp.status]){ const ch = document.createElement('span'); ch.className = 'chip st-' + sp.status; ch.textContent = GSTATUS[sp.status]; ln.appendChild(ch); }
+          const tx = document.createElement('span'); tx.textContent = bits.join(' · '); ln.appendChild(tx);
+          pc.appendChild(ln);
+        }
+      }
+      if (g.type === 'custom'){ const b = document.createElement('button'); b.className = 'linkbtn'; b.textContent = '记进度'; b.addEventListener('click', () => setGoalCurrent(g)); pc.appendChild(b); }
       c.appendChild(pc);
     } else {
       const pc = document.createElement('div'); pc.className='prow';
       const l = document.createElement('span'); l.className='l'; l.textContent='进度';
-      const r = document.createElement('span'); r.className='r'; r.textContent='手动跟踪';
+      const r = document.createElement('span'); r.className='r';
+      if (g.type === 'custom'){ const b = document.createElement('button'); b.className = 'linkbtn'; b.textContent = '记进度'; b.addEventListener('click', () => setGoalCurrent(g)); r.appendChild(b); }
+      else r.textContent = '还没有数据';
       pc.appendChild(l); pc.appendChild(r); c.appendChild(pc);
     }
     if (g.milestones && g.milestones.length){
@@ -2489,6 +2540,43 @@ async function arriveHome(){
     toast(n ? ('到家了 · 今天还有 ' + n + ' 件' + (j.enabled ? '' : '（提醒没开，可在设置里打开）')) : '到家了 · 今天的都做完了');
   } catch (e) { toast('失败：' + e.message); }
 }
+/* 提醒卡：按种类给不同按钮；结果回报给 server，用来统计哪种提醒对你有用 */
+function nudgeCardHtml(n){
+  const k = n.kind || '';
+  let h = '<div class="nudgecard"><b>' + esc(n.title || '') + '</b><p>' + esc(n.body || '') + '</p>';
+  if (k === 'brief' && (n.detail || []).length) h += '<div class="ndetail">' + n.detail.map(x => '<span>' + esc(x) + '</span>').join('') + '</div>';
+  if (k === 'recap'){
+    h += '<div class="nb mood"><button class="btn sm" data-mood="good">顺</button><button class="btn sm" data-mood="ok">一般</button><button class="btn sm" data-mood="bad">累</button>' +
+      '<input id="recapNote" type="text" maxlength="300" placeholder="一句话（可不填）"><button class="linkbtn" data-nudge-ok>不说了</button></div></div>';
+    return h;
+  }
+  h += '<div class="nb">';
+  if (k === 'brief') h += '<button class="btn sm" data-nudge-ok>好</button>';
+  else {
+    h += '<button class="btn sm primary" data-nudge-start>开始了</button>';
+    if (k === 'evening') h += '<button class="btn sm" data-nudge-roll>挪到明天</button>';
+    else h += '<button class="btn sm" data-nudge-ok>好</button>';
+    h += '<button class="linkbtn" data-snooze>今天算了</button>';
+    if ((k === 'arrive' || k === 'follow') && n.max > 1) h += '<span class="chip">' + n.sent + ' / ' + n.max + '</span>';
+  }
+  return h + '</div></div>';
+}
+async function nudgeOutcome(outcome, msg){
+  const id = S.nudge && S.nudge.id;
+  S.nudge = null; renderToday();
+  if (msg) toast(msg);
+  if (!id) return;
+  try { await fetch('/api/nudge/outcome', { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ id, outcome }) }); } catch { /* 忽略 */ }
+}
+async function sendRecap(mood){
+  const note = ($('#recapNote') || {}).value || '';
+  const id = S.nudge && S.nudge.id;
+  try {
+    const r = await fetch('/api/recap', { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ mood, note, nudgeId: id }) });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    S.nudge = null; renderToday(); toast('记下了');
+  } catch (e) { toast('失败：' + e.message); }
+}
 async function snoozeNudge(){
   S.nudge = null; renderToday();
   try { await fetch('/api/nudge/snooze', { method:'POST' }); toast('好，今天不再提醒'); } catch (e) { toast('失败：' + e.message); }
@@ -2520,18 +2608,51 @@ async function showWeekly(force){
     S.msgs.push({ kind:'weekly', data: w, ts: Date.now() }); renderStream(); autoScroll();
   } catch { /* 忽略 */ }
 }
+const GSTATUS = { done:'已达成', ahead:'领先', on:'按计划', behind:'落后' };
+function progShort(p){
+  if (!p || p.pct == null) return '';
+  let t = Math.round(p.pct * 100) + '%';
+  if (GSTATUS[p.status]) t += ' · ' + GSTATUS[p.status];
+  if (p.eta && p.status !== 'done') t += ' · 预计 ' + p.eta.slice(5);
+  return t;
+}
 function buildWeekly(m){
   const w = m.data || {}; const lw = w.lastWeek || {};
+  const prog = Object.fromEntries((w.progress || []).map(p => [p.goalId, p]));
   const el = document.createElement('div'); el.className = 'weekly';
   const pct = lw.rate == null ? '' : Math.round(lw.rate * 100) + '%';
   let h = '<div class="wk">— Weekly</div><div class="wt">新的一周。' + (lw.committed ? '上周你承诺了 ' + lw.committed + ' 件，完成 ' + lw.done + ' 件（' + pct + '）。' : '上周没有承诺的事。') + '</div>';
-  h += '<div class="wrows">' + (w.goals || []).map(g => '<div class="wr"><b>' + esc(g.title) + '</b><span>上周 ' + g.lastWeek.done + '/' + g.lastWeek.committed + '</span><span>本周已有建议 ' + g.thisWeek.suggested + '</span></div>').join('') + '</div>';
+  h += '<div class="wrows">' + (w.goals || []).map(g => {
+    const p = prog[g.goalId];
+    return '<div class="wr"><b>' + esc(g.title) + '</b><span>上周 ' + g.lastWeek.done + '/' + g.lastWeek.committed + '</span>' +
+      (p && p.pct != null ? '<span class="wp ' + (p.status || '') + '">' + esc(progShort(p)) + '</span>' : '<span>本周已有建议 ' + g.thisWeek.suggested + '</span>') + '</div>';
+  }).join('') + '</div>';
+  const notes = [];
+  const sp = w.spending;
+  if (sp && sp.avg != null){
+    let t = '上周支出 ' + Math.round(sp.total) + '（平时周均 ' + Math.round(sp.avg) + '）';
+    if ((sp.up || []).length) t += '，多花在 ' + sp.up.map(u => u.category + ' +' + Math.round(u.delta)).join('、');
+    notes.push(t);
+  }
+  const moods = w.moods || [];
+  if (moods.length){
+    const zh = { good:'顺', ok:'一般', bad:'累' }; const cnt = {};
+    for (const x of moods) cnt[x.mood] = (cnt[x.mood] || 0) + 1;
+    notes.push('上周回顾：' + ['good','ok','bad'].filter(k => cnt[k]).map(k => zh[k] + ' ' + cnt[k] + ' 天').join(' · '));
+  }
+  const ins = ((w.nudge || {}).insights || []);
+  if (ins.length) notes.push('提醒：' + ins.slice(0, 2).join('；'));
+  if (notes.length) h += '<div class="wnotes">' + notes.map(x => '<div>' + esc(x) + '</div>').join('') + '</div>';
   h += '<div class="wb"><button class="btn primary sm" data-wk-go>让 Yours 给本周建议</button><button class="linkbtn" data-wk-skip>这周先不用</button></div>';
   el.innerHTML = h;
   el.querySelector('[data-wk-go]').addEventListener('click', () => {
-    const gs = (w.goals || []).map(g => '目标「' + g.title + '」（id: ' + g.goalId + '）上周 ' + g.lastWeek.done + '/' + g.lastWeek.committed).join('；');
+    const gs = (w.goals || []).map(g => {
+      const p = prog[g.goalId];
+      return '目标「' + g.title + '」（id: ' + g.goalId + '）上周 ' + g.lastWeek.done + '/' + g.lastWeek.committed + (p && p.text ? '，' + p.text : '');
+    }).join('；');
     S.msgs = S.msgs.filter(x => x !== m);
-    $('#input').value = '新的一周，给我本周建议。上周承诺完成 ' + (lw.done || 0) + '/' + (lw.committed || 0) + '。' + gs + '。先用两三句点评上周（做得好的、卡住的），再给每个目标拆出这周 2–3 件建议（用 suggest_plan 按目标分别写入），最后问我哪些要加入本周。';
+    $('#input').value = '新的一周，给我本周建议。上周承诺完成 ' + (lw.done || 0) + '/' + (lw.committed || 0) + '。' + gs + '。' + (notes.length ? notes.join('。') + '。' : '') +
+      '先用两三句点评上周（做得好的、卡住的；落后的目标说清差多少、要不要调目标或节奏），再给每个目标拆出这周 2–3 件建议（用 suggest_plan 按目标分别写入）。如果提醒效果显示某些时段没用，提一个具体的规则调整建议（我同意才改）。最后问我哪些要加入本周。';
     send();
   });
   el.querySelector('[data-wk-skip]').addEventListener('click', () => { S.msgs = S.msgs.filter(x => x !== m); renderStream(); });
@@ -2543,7 +2664,7 @@ const NUDGE_LEVELS = [['gentle','温和'], ['follow','跟进'], ['strong','强']
 const NUDGE_CH = [['none','只在网页里'], ['ntfy','ntfy'], ['bark','Bark（iOS）'], ['webhook','自定义 webhook']];
 const NUDGE_HINT = { none:'', ntfy:'如 https://ntfy.sh/一个只有你知道的频道名（手机装 ntfy App 订阅同名频道）', bark:'Bark App 里复制的地址，如 https://api.day.app/你的key', webhook:'POST JSON { title, body, urgent, todos }' };
 function nudgeCard(){
-  const c = card('到家提醒', '规则你定 · 默认关闭');
+  const c = card('提醒与简报', '规则你定 · 默认关闭');
   const body = document.createElement('div'); body.textContent = '读取中…'; body.className = 'chip';
   c.appendChild(body);
   fetch('/api/nudge').then(r => r.json()).then(j => {
@@ -2562,8 +2683,10 @@ function nudgeCard(){
     const hd = num(cfg.homeDelayMin, 0, 120);
     const hdw = document.createElement('div'); hdw.className = 'swatches'; hdw.append(hd, Object.assign(document.createElement('span'), { className:'chip', textContent:'分钟后再问' }));
     line('到家缓冲', '到家后先歇一会儿；0 = 立刻', hdw);
+    const br = tm(cfg.briefAt || '');
+    line('早间简报', '到这个时间推一条：今天的承诺、可以挑的建议、日程条数（留空 = 不发）', br);
     const ev = tm(cfg.eveningAt || '');
-    line('晚间检查', '到这个时间还有没做完的承诺，就问一句（留空 = 不检查）', ev);
+    line('晚间检查', '到这个时间还有没做完的承诺就问一句；都做完了就问一句今天怎么样（留空 = 不发）', ev);
     const qs = tm(cfg.quietStart), qe = tm(cfg.quietEnd);
     const qw = document.createElement('div'); qw.className = 'swatches'; qw.append(qs, Object.assign(document.createElement('span'), { className:'chip', textContent:'到' }), qe);
     line('安静时段', '这段时间不发任何提醒', qw);
@@ -2582,7 +2705,7 @@ function nudgeCard(){
     const perm = document.createElement('button'); perm.className = 'btn ghost'; perm.textContent = '允许浏览器通知';
     if (!('Notification' in window) || Notification.permission === 'granted') perm.style.display = 'none';
     btns.append(save, test, perm); c.appendChild(btns);
-    const collect = () => Object.assign(cfg, { homeDelayMin: +hd.value, eveningAt: ev.value || '', intervalMin: +iv.value, maxCount: +mx.value, quietStart: qs.value, quietEnd: qe.value, channel: { type: chSel.value, url: url.value.trim() } });
+    const collect = () => Object.assign(cfg, { homeDelayMin: +hd.value, eveningAt: ev.value || '', briefAt: br.value || '', intervalMin: +iv.value, maxCount: +mx.value, quietStart: qs.value, quietEnd: qe.value, channel: { type: chSel.value, url: url.value.trim() } });
     save.addEventListener('click', async () => {
       collect();
       try {
@@ -2602,6 +2725,18 @@ function nudgeCard(){
     sc.innerHTML = '<b>自动判断到家（可选）</b>：iPhone「快捷指令 → 自动化 → 到达（家）」→ 动作「获取 URL 内容」，方法 POST，地址 <code>' + esc(location.origin) + '/api/home</code>' +
       '（手机要能访问这台电脑，比如 Tailscale；开了局域网令牌的话加请求头 <code>x-access-token</code>）。详见 <code>docs/NUDGE-SETUP.md</code>';
     c.appendChild(sc);
+    // 提醒效果：最近 4 周哪种提醒让你动起来了
+    const eff = document.createElement('div'); eff.className = 'nstats';
+    eff.innerHTML = '<b>提醒效果</b><span class="chip">最近 4 周</span>';
+    c.appendChild(eff);
+    fetch('/api/nudge/stats').then(r => r.json()).then(st => {
+      const ul = document.createElement('ul');
+      for (const s of st.insights || []){ const li = document.createElement('li'); li.textContent = s; ul.appendChild(li); }
+      eff.appendChild(ul);
+      const ex = document.createElement('div'); ex.className = 'chip';
+      ex.textContent = '提醒后 1 小时内做完其中一件、或点了「开始了」，算这次提醒有用';
+      eff.appendChild(ex);
+    }).catch(() => {});
   }).catch(() => { body.textContent = '读取提醒设置失败'; });
   return c;
 }
@@ -3172,7 +3307,7 @@ function renderToday(){
   const nextIdx = evs.findIndex(e => (e.startTime || '99:99') >= hm);
   const nx = nextIdx >= 0 ? evs[nextIdx] : null;
   let h = '<div class="th"><span class="g">今天</span><span class="dt">' + now.toLocaleDateString('en-GB', { weekday:'long', day:'numeric', month:'long' }) + '</span><span class="clock" id="tClock">' + fmtTime(now).slice(0, 5) + '</span></div>';
-  if (S.nudge) h += '<div class="nudgecard"><b>' + esc(S.nudge.title || '') + '</b><p>' + esc(S.nudge.body || '') + '</p><div class="nb"><button class="btn sm" data-nudge-ok>好</button><button class="linkbtn" data-snooze>今天算了</button>' + (S.nudge.max > 1 ? '<span class="chip">' + S.nudge.sent + ' / ' + S.nudge.max + '</span>' : '') + '</div></div>';
+  if (S.nudge) h += nudgeCardHtml(S.nudge);
   h += '<div class="hello">' + esc(hi + (name ? '，' + name : '') + '。') + (nx ? '下一件事是「' + esc(nx.title || '') + '」' + (nx.startTime ? '，' + esc(nx.startTime) + ' 开始。' : '。') : '今天没有别的安排。') + '</div>';
   h += '<div class="homebar"><button class="homebtn" data-home title="记下到家时间；开了提醒的话按你的规则提醒没做完的事">⌂ 我到家了</button></div>';
   const allTodos = d.todos || [];
@@ -3373,6 +3508,9 @@ function init(){
     if (e.target.closest('[data-roll]')){ rollOver(); return; }
     if (e.target.closest('[data-snooze]')){ snoozeNudge(); return; }
     if (e.target.closest('[data-nudge-ok]')){ S.nudge = null; renderToday(); return; }
+    if (e.target.closest('[data-nudge-start]')){ nudgeOutcome('started', '好，开始吧'); return; }
+    if (e.target.closest('[data-nudge-roll]')){ nudgeOutcome('postponed'); rollOver(); return; }
+    const md = e.target.closest('[data-mood]'); if (md){ sendRecap(md.dataset.mood); return; }
     const cm = e.target.closest('[data-commit]'); if (cm){ const x = ((S.data||{}).todos||[]).find(y => y.id === cm.dataset.commit); if (x) todoPatch(x.id, { plan:'committed', dueDate: todayStr() }, '今天做 · ' + x.title); return; }
     const dp = e.target.closest('[data-drop]'); if (dp){ todoDrop(dp.dataset.drop); return; }
     const go = e.target.closest('[data-go]'); if (go){ setView('panel', go.dataset.go); return; }

@@ -9,6 +9,7 @@
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
+import { resolveOutcomes, nudgeStats, nudgeInsights, type NudgeKind, type NudgeOutcome, type NudgeRecord, type NudgeStats } from './nudge-log.ts';
 
 export type NudgeLevel = 'gentle' | 'follow' | 'strong';
 export type ChannelType = 'none' | 'ntfy' | 'bark' | 'webhook';
@@ -28,6 +29,8 @@ export interface NudgeConfig {
   homeDelayMin: number;
   /** 晚间检查：到这个时间还有没完成的承诺就问一句（'' = 不检查） */
   eveningAt: string;
+  /** 早间简报：到这个时间推一条"今天要做什么"（'' = 不发） */
+  briefAt: string;
   channel: { type: ChannelType; url: string };
 }
 
@@ -46,6 +49,7 @@ export interface NudgeState {
   lastSentAt: number | null;
   snoozed: boolean;
   eveningSent?: boolean;
+  briefSent?: boolean;
 }
 
 export interface TodoLike {
@@ -63,6 +67,11 @@ export interface NudgeMessage {
   body: string;
   urgent: boolean;
   todos: string[];
+  /** 种类和记录 id（网页卡片用来回报结果） */
+  kind?: NudgeKind;
+  id?: string;
+  /** 只在网页里显示的补充（如今天的日程），不发到手机渠道 */
+  detail?: string[];
 }
 
 export const DEFAULT_CONFIG: NudgeConfig = {
@@ -75,6 +84,7 @@ export const DEFAULT_CONFIG: NudgeConfig = {
   quietEnd: '08:00',
   homeDelayMin: 15,
   eveningAt: '',
+  briefAt: '',
   channel: { type: 'none', url: '' },
 };
 
@@ -110,6 +120,7 @@ export function normalizeConfig(raw: unknown): NudgeConfig {
     quietEnd: typeof r.quietEnd === 'string' && HM.test(r.quietEnd) ? r.quietEnd : DEFAULT_CONFIG.quietEnd,
     homeDelayMin: clamp(r.homeDelayMin, 0, 120, DEFAULT_CONFIG.homeDelayMin),
     eveningAt: typeof r.eveningAt === 'string' && HM.test(r.eveningAt) ? r.eveningAt : '',
+    briefAt: typeof r.briefAt === 'string' && HM.test(r.briefAt) ? r.briefAt : '',
     channel: type !== 'none' && validChannelUrl(url) ? { type, url } : { type: 'none', url: '' },
   };
 }
@@ -119,7 +130,7 @@ export function ymd(d: Date): string {
 }
 
 export function freshState(now: Date): NudgeState {
-  return { day: ymd(now), arrivedAt: null, sent: 0, lastSentAt: null, snoozed: false, eveningSent: false };
+  return { day: ymd(now), arrivedAt: null, sent: 0, lastSentAt: null, snoozed: false, eveningSent: false, briefSent: false };
 }
 
 /** 是否在安静时段（支持跨午夜，如 23:30–08:00）；start == end 视为没有安静时段 */
@@ -162,6 +173,60 @@ export function shouldEvening(cfg: NudgeConfig, st: NudgeState, pendingCount: nu
   return m >= at;
 }
 
+const minutesOf = (hm: string): number => Number(hm.slice(0, 2)) * 60 + Number(hm.slice(3, 5));
+
+/** 晚间回顾：到了晚间时间，但没有要催的（都做完了 / 点过今天算了）→ 只问一句今天怎么样 */
+export function shouldRecap(cfg: NudgeConfig, st: NudgeState, pendingCount: number, now: Date): boolean {
+  if (!cfg.enabled || !cfg.eveningAt || st.eveningSent) return false;
+  if (pendingCount > 0 && !st.snoozed) return false;
+  if (st.day !== ymd(now)) return false;
+  if (inQuiet(now, cfg.quietStart, cfg.quietEnd)) return false;
+  return now.getHours() * 60 + now.getMinutes() >= minutesOf(cfg.eveningAt);
+}
+
+export function recapMessage(doneToday: number): NudgeMessage {
+  return {
+    title: '今天怎么样',
+    body: (doneToday ? `今天的 ${doneToday} 件都做完了。` : '') + '一句话回顾一下今天？',
+    urgent: false,
+    todos: [],
+    kind: 'recap',
+  };
+}
+
+/** 早间简报：开着、到点后 3 小时内、今天没发过、不在安静时段 */
+export function shouldBrief(cfg: NudgeConfig, st: NudgeState, now: Date): boolean {
+  if (!cfg.enabled || !cfg.briefAt || st.briefSent) return false;
+  if (st.day !== ymd(now)) return false;
+  if (inQuiet(now, cfg.quietStart, cfg.quietEnd)) return false;
+  const m = now.getHours() * 60 + now.getMinutes(), at = minutesOf(cfg.briefAt);
+  return m >= at && m < at + 180;
+}
+
+/** 简报正文只含待办标题和日程条数；日程内容放 detail（只在网页里显示） */
+export function briefMessage(todos: TodoLike[], today: string, events: string[] = []): NudgeMessage {
+  const open = todos.filter((t) => t && !t.done);
+  const committed = open.filter((t) => t.plan !== 'suggested');
+  const todayC = pendingForNudge(committed.filter((t) => !t.dueDate || t.dueDate === today), today, 'all');
+  const overdue = committed.filter((t) => t.dueDate && t.dueDate < today);
+  const sug = open.filter((t) => t.plan === 'suggested' && t.dueDate === today);
+  const q = (xs: TodoLike[], n: number): string => xs.slice(0, n).map((t) => `「${String(t.title ?? '').slice(0, 30)}」`).join('');
+  const parts: string[] = [];
+  parts.push(todayC.length ? `今天 ${todayC.length} 件承诺：${q(todayC, 3)}${todayC.length > 3 ? ' 等' : ''}。` : '今天还没有承诺。');
+  if (overdue.length) parts.push(`之前还剩 ${overdue.length} 件没做（${q(overdue, 1)}）。`);
+  if (sug.length) parts.push(`有 ${sug.length} 条建议可以挑，点 + 加入。`);
+  else if (!todayC.length) parts.push('要不要和 Yours 聊聊今天做什么？');
+  if (events.length) parts.push(`日程 ${events.length} 项。`);
+  return {
+    title: '今天',
+    body: parts.join(''),
+    urgent: false,
+    todos: [...todayC, ...overdue].map((t) => String(t.title ?? '')).filter(Boolean).slice(0, 5),
+    kind: 'brief',
+    detail: events.slice(0, 8),
+  };
+}
+
 export function eveningMessage(pending: TodoLike[]): NudgeMessage {
   const titles = pending.map((t) => String(t.title ?? '').slice(0, 40)).filter(Boolean);
   return {
@@ -169,6 +234,7 @@ export function eveningMessage(pending: TodoLike[]): NudgeMessage {
     body: `「${titles[0] ?? ''}」${titles.length > 1 ? ` 等 ${titles.length} 件` : ''}还没做。现在做一件，还是挪到明天？`,
     urgent: false,
     todos: titles,
+    kind: 'evening',
   };
 }
 
@@ -191,6 +257,7 @@ export function composeMessage(cfg: NudgeConfig, sentSoFar: number, pending: Tod
       body: `今天还有 ${titles.length} 件没做。先做「${first}」，25 分钟就好？${rest}${tail ? ' ' + tail : ''}`,
       urgent: cfg.level === 'strong',
       todos: titles,
+      kind: 'arrive',
     };
   }
   return {
@@ -198,6 +265,7 @@ export function composeMessage(cfg: NudgeConfig, sentSoFar: number, pending: Tod
     body: `先开个头，10 分钟也算数。${rest}${tail ? ' ' + tail : ''}`,
     urgent: cfg.level === 'strong',
     todos: titles,
+    kind: 'follow',
   };
 }
 
@@ -226,6 +294,8 @@ export interface NudgeDeps {
   getTodos: () => TodoLike[];
   /** 网页内投递（WS 广播） */
   broadcast: (msg: NudgeMessage & { type: 'nudge'; sent: number; max: number }) => void;
+  /** 今天的日程（"14:00 组会"），早间简报用；只在网页里显示 */
+  todayEvents?: (now: Date) => Promise<string[]>;
   /** 外部投递，默认全局 fetch */
   fetchImpl?: (url: string, init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal }) => Promise<{ ok: boolean; status: number }>;
   log?: (line: string) => void;
@@ -244,7 +314,10 @@ export class NudgeEngine {
   private get cfgFile(): string { return path.join(this.deps.dataDir, 'nudge.json'); }
   private get stateFile(): string { return path.join(this.deps.dataDir, 'nudge-state.json'); }
   private get checkinFile(): string { return path.join(this.deps.dataDir, 'nudge-checkins.json'); }
+  private get logFile(): string { return path.join(this.deps.dataDir, 'nudge-log.json'); }
   checkins: Checkin[] = [];
+  /** 提醒效果记录（最多 500 条） */
+  log: NudgeRecord[] = [];
 
   async init(): Promise<void> {
     try { this.config = normalizeConfig(JSON.parse(await readFile(this.cfgFile, 'utf8'))); } catch { this.config = { ...DEFAULT_CONFIG }; }
@@ -257,6 +330,30 @@ export class NudgeEngine {
       // 过期超过 12 小时的回访不再补发
       if (Array.isArray(c)) this.checkins = c.filter((x) => x && typeof x.dueAt === 'number' && Date.now() - x.dueAt < 12 * 3600_000);
     } catch { /* 无回访 */ }
+    try {
+      const l = JSON.parse(await readFile(this.logFile, 'utf8')) as NudgeRecord[];
+      if (Array.isArray(l)) this.log = l.filter((r) => r && typeof r.id === 'string' && typeof r.at === 'number' && Array.isArray(r.todoIds));
+    } catch { /* 无记录 */ }
+  }
+
+  private async saveLog(): Promise<void> {
+    await mkdir(this.deps.dataDir, { recursive: true });
+    await writeFile(this.logFile, JSON.stringify(this.log) + '\n', 'utf8');
+  }
+
+  /** 网页卡片回报：开始了 / 挪到明天 / 今天算了 */
+  async setOutcome(id: string, outcome: NudgeOutcome, now = Date.now()): Promise<boolean> {
+    const r = this.log.find((x) => x.id === id);
+    if (!r || (r.outcome && r.outcome !== 'started' && r.outcome !== 'ignored')) return false;
+    r.outcome = outcome;
+    r.outcomeAt = now;
+    await this.saveLog();
+    return true;
+  }
+
+  stats(now = Date.now(), days = 28): NudgeStats & { insights: string[] } {
+    const s = nudgeStats(this.log, now, days);
+    return { ...s, insights: nudgeInsights(s) };
   }
 
   private async saveCheckins(): Promise<void> {
@@ -325,24 +422,48 @@ export class NudgeEngine {
     this.rollover(now);
     this.state.snoozed = true;
     await this.persist();
+    // 今天还在等结果的提醒，都记成"今天算了"
+    let changed = false;
+    for (const r of this.log) {
+      if (!r.outcome && ymd(new Date(r.at)) === ymd(now) && r.kind !== 'brief' && r.kind !== 'recap') { r.outcome = 'snoozed'; r.outcomeAt = now.getTime(); changed = true; }
+    }
+    if (changed) await this.saveLog();
   }
 
   /** 每分钟一次；返回这次是否发了 */
   async tick(now: Date): Promise<boolean> {
     this.rollover(now);
+    if (resolveOutcomes(this.log, this.deps.getTodos(), now.getTime())) await this.saveLog();
     // 对话里约好的回访：用户自己要求的，不受总开关限制（只受安静时段）
     const due = dueCheckins(this.checkins, this.config, now);
     if (due.length) {
       const ids = new Set(due.map((c) => c.id));
       this.checkins = this.checkins.filter((c) => !ids.has(c.id));
       await this.saveCheckins();
-      for (const c of due) await this.deliver({ title: '回访', body: c.message, urgent: false, todos: this.pending(now).map((x) => String(x.title ?? '')).slice(0, 5) });
+      const p = this.pending(now);
+      for (const c of due) await this.deliver({ title: '回访', body: c.message, urgent: false, todos: p.map((x) => String(x.title ?? '')).slice(0, 5), kind: 'checkin' }, p, now.getTime());
+    }
+    if (shouldBrief(this.config, this.state, now)) {
+      this.state.briefSent = true;
+      await this.persist();
+      let events: string[] = [];
+      try { events = (await this.deps.todayEvents?.(now)) ?? []; } catch { /* 日程读不到就不带 */ }
+      await this.deliver(briefMessage(this.deps.getTodos(), ymd(now), events), [], now.getTime());
+      return true;
     }
     const pending = this.pending(now);
     if (shouldEvening(this.config, this.state, pending.length, now)) {
       this.state.eveningSent = true;
       await this.persist();
-      await this.deliver(eveningMessage(pending));
+      await this.deliver(eveningMessage(pending), pending, now.getTime());
+      return true;
+    }
+    if (shouldRecap(this.config, this.state, pending.length, now)) {
+      this.state.eveningSent = true;
+      await this.persist();
+      const today = ymd(now);
+      const doneToday = this.deps.getTodos().filter((t) => t && t.done && t.plan !== 'suggested' && t.dueDate === today).length;
+      await this.deliver(recapMessage(doneToday), [], now.getTime());
       return true;
     }
     if (!shouldSend(this.config, this.state, pending.length, now)) return false;
@@ -350,14 +471,21 @@ export class NudgeEngine {
     this.state.sent += 1;
     this.state.lastSentAt = now.getTime();
     await this.persist();
-    await this.deliver(msg);
+    await this.deliver(msg, pending, now.getTime());
     return true;
   }
 
-  /** 投递：网页内一定发；外部渠道失败只记日志 */
-  async deliver(msg: NudgeMessage): Promise<{ external: 'skipped' | 'ok' | string }> {
+  /** 投递：网页内一定发；外部渠道失败只记日志。带 kind 的提醒记进效果记录 */
+  async deliver(msg: NudgeMessage, pending: TodoLike[] = [], at = Date.now()): Promise<{ external: 'skipped' | 'ok' | string }> {
+    if (msg.kind) {
+      const rec: NudgeRecord = { id: Math.random().toString(36).slice(2, 10), at, kind: msg.kind, todoIds: pending.map((t) => String(t.id ?? '')).filter(Boolean).slice(0, 20) };
+      this.log = [...this.log, rec].slice(-500);
+      msg = { ...msg, id: rec.id };
+      await this.saveLog();
+    }
     this.deps.broadcast({ type: 'nudge', ...msg, sent: this.state.sent, max: this.config.maxCount });
-    const req = buildRequest(this.config.channel, msg);
+    const { detail: _web, ...ext } = msg;
+    const req = buildRequest(this.config.channel, ext);
     if (!req) return { external: 'skipped' };
     const f = this.deps.fetchImpl ?? ((url, init) => fetch(url, init));
     try {

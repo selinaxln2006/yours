@@ -37,14 +37,16 @@ import { SyncEngine, SyncState } from '../core/sync.ts';
 import { SupabaseSyncTransport } from './sync-rest.ts';
 import { SupabaseRealtime, type RealtimeState } from '../core/realtime.ts';
 import { checkRequestSource, generateAccessToken, redactSearch, tokenMatches } from './request-guard.ts';
-import { DemoAdapter, seedDemoData } from './demo.ts';
+import { DemoAdapter, seedDemoData, demoNudgeLog, demoJournal } from './demo.ts';
 import { turnMessages } from './turn.ts';
 import { NudgeEngine } from './nudge.ts';
-import { AssetsStore, normalizeAccount, maturing, convert, type Account } from './assets.ts';
+import { AssetsStore, normalizeAccount, maturing, convert, valueAccounts, type Account } from './assets.ts';
+import { goalProgress, progressText, spendingWeek, type GoalData, type GoalInput, type Point } from './goal-progress.ts';
+import { JournalStore, normalizeEntry, MOOD_ZH } from './journal.ts';
 import { fetchIbkr, fetchMoomoo, mergeBroker } from './asset-connectors.ts';
 import { seedDemoAssets } from './demo.ts';
 import { applyEdits } from './confirm-edit.ts';
-import { weeklyStats, buildContext } from './weekly.ts';
+import { weeklyStats, buildContext, scheduleLines, weekStartOf, ymd } from './weekly.ts';
 import { extractMemories } from './memory-extract.ts';
 import {
   parseMcpServers, mcpToolDefinitions, connectMcpServers, findCalendarClient,
@@ -100,6 +102,7 @@ __TOOLS__
 - life_* 直接读写生活数据（目标/健身/养生/日程/待办/记账），写入实时推送用户界面；做规划前先 life_query_summary 了解现状
 - 回访：用户说了自己在哪、在干嘛、或者"先躺会儿/等下再做"，而今天还有承诺没完成时，用 nudge_checkin 约一个回访（如 30 分钟后），并告诉他你会回来问；用户说"我到家了"时可调 nudge_home（按他设置的规则提醒）
 - 目标和建议要讨论：拆解前先问清楚他现在的进度、这周有多少时间、卡在哪；建议随每周进度调整（完成得好就加一点，完不成就减量、换更小的步子）
+- 目标进度：现状里每个目标的进度是从数据算出来的（体重记录 / 资产总额 / 打卡天数 / 手动值），带「按时间应到多少」和「照这个速度哪天到」；落后时直接说差多少，问要不要调节奏或目标。自定义目标的进度用户告诉你时用 goal_set_progress 记下
 - 计划分两种：目标拆解出来的参考计划用 life_suggest_plan 写成「建议」（不提醒、可以多）；用户明确说要做的事用 life_add_todo（「承诺」，会参与到家提醒）。用户说"回家后/到家要做"时 add_todo 设 atHome:true。不要替用户把建议变成承诺
 - 重复提醒用 add_schedule 的 rrule/rruleDays：每周一 → rrule:"weekly"+rruleDays:[1]，持续N周传 count:N
 - web_fetch / web_search 可直接联网查资料、抓网页、搜 GitHub；web_download 下载文件到沙箱 downloads/（skill 包、PDF 模板等）
@@ -666,9 +669,23 @@ async function main(): Promise<void> {
     getTodos: () => (lifeStore.get('todos') as Array<Record<string, unknown>> | undefined) ?? [],
     broadcast: (m) => broadcast(m),
     log: (line) => console.log(line),
+    // 早间简报带上今天的日程（本地 + 日历），只在网页里显示
+    todayEvents: async (now) => {
+      const day = ymd(now);
+      const local = scheduleLines((lifeStore.get('schedule') as Array<Record<string, unknown>> | undefined) ?? [], day);
+      if (!calClient) return local;
+      try {
+        const evs = await fetchCalendarEvents(calClient, day, day);
+        return [...local, ...evs.map((e) => `${e.startTime ? e.startTime + ' ' : ''}${e.title}`)].sort();
+      } catch { return local; }
+    },
   });
   await nudge.init();
   nudge.start();
+  // 晚间回顾的回答（心情 + 一句话）
+  const journal = new JournalStore(path.join(DATA_ROOT, 'data'));
+  await journal.init();
+  if (DEMO) { nudge.log = demoNudgeLog(); journal.entries = demoJournal(); }
 
   // 资产（PRD v0.4）：data/assets.json；每 6 小时后台刷新一次汇率与行情
   const assets = new AssetsStore(path.join(DATA_ROOT, 'data'));
@@ -717,6 +734,56 @@ async function main(): Promise<void> {
       };
     },
   });
+  // 目标进度：从体重 / 资产 / 打卡 / 手动值算出来（PRD v0.5「目标自己会动」）
+  const HABIT_FIELDS = ['water', 'meditation', 'stretching', 'exerciseLog', 'beauty', 'sleep'] as const;
+  function goalData(now: Date): GoalData {
+    const d = (k: LifeKey): Array<Record<string, unknown>> => (lifeStore.get(k) as Array<Record<string, unknown>> | undefined) ?? [];
+    const base = assets.data.baseCurrency;
+    const saving: Point[] = [];
+    if (assets.data.accounts.length) {
+      for (const sn of assets.data.snapshots) {
+        const v = sn.base === base ? sn.total : convert(sn.total, sn.base, base, assets.data.fx);
+        if (v !== null && sn.month !== ymd(now).slice(0, 7)) saving.push({ date: sn.date, value: v });
+      }
+      saving.push({ date: ymd(now), value: valueAccounts(assets.data, now.getTime()).total });
+    }
+    const habits: Record<string, string[]> = {};
+    for (const f of HABIT_FIELDS) habits[f] = d(f).map((x) => String(x.date ?? '')).filter(Boolean);
+    return {
+      weights: d('weights') as GoalData['weights'],
+      saving,
+      savingUnit: base,
+      investmentsTotal: d('investments').reduce((s, x) => s + (Number(x.amount) || 0), 0),
+      habits,
+    };
+  }
+  function allGoalProgress(now: Date): ReturnType<typeof goalProgress>[] {
+    const gd = goalData(now);
+    return ((lifeStore.get('goals') as GoalInput[] | undefined) ?? []).filter((g) => g && g.id && g.status !== 'done').map((g) => goalProgress(g, gd, now));
+  }
+
+  pipeline.register({
+    name: 'goal_set_progress',
+    desc: '更新自定义目标的当前进度（如「论文写到第 3 章」→ current:3）。体重 / 储蓄 / 习惯类目标会自动从数据计算，不用这个',
+    params: {
+      goalId: { type: 'string', desc: '目标 id', required: true },
+      current: { type: 'number', desc: '当前值', required: true },
+    },
+    risk: 2,
+    handler: async (args) => {
+      const id = String(args.goalId ?? ''), cur = Number(args.current);
+      if (!Number.isFinite(cur)) throw new Error('current 必须是数字');
+      let found = false;
+      await lifeStore.tx((d) => {
+        const gs = (d.goals as Array<Record<string, unknown>>) ?? [];
+        const g = gs.find((x) => x.id === id);
+        if (g) { g.current = cur; g.currentAt = Date.now(); found = true; }
+      }, { source: 'agent' });
+      if (!found) throw new Error('没有这个目标');
+      return { ok: true };
+    },
+  });
+
   pipeline.register({
     name: 'nudge_checkin',
     desc: '约一个回访：afterMin 分钟后在网页（和用户配置的手机渠道）问用户一句 message。用于用户说"先躺会儿/等下再做/我在路上"等场景，帮他按承诺回来做事。只约用户同意的回访',
@@ -762,11 +829,16 @@ async function main(): Promise<void> {
       const extra = nudge.checkins.length
         ? [`已约的回访：${nudge.checkins.map((c) => `${new Date(c.dueAt).toTimeString().slice(0, 5)}「${c.message}」`).join('；')}`]
         : [];
+      const today = journal.entries.find((e) => e.date === ymd(now));
+      if (today) extra.push(`今晚的回顾：${MOOD_ZH[today.mood]}${today.note ? `，「${today.note}」` : ''}`);
+      let progress = new Map<string, string>();
+      try { progress = new Map(allGoalProgress(now).map((p) => [p.goalId, progressText(p)])); } catch { /* 算不出来就不带 */ }
       return buildContext(
         (lifeStore.get('todos') as Array<Record<string, unknown>> | undefined) ?? [],
         (lifeStore.get('goals') as Array<Record<string, unknown>> | undefined) ?? [],
         now,
         extra,
+        progress,
       );
     },
   });
@@ -1132,11 +1204,37 @@ async function main(): Promise<void> {
 
       // ---- 周复盘统计 ----
       if (p === '/api/weekly' && req.method === 'GET') {
-        sendJson(res, 200, weeklyStats(
-          (lifeStore.get('todos') as Array<Record<string, unknown>> | undefined) ?? [],
-          (lifeStore.get('goals') as Array<Record<string, unknown>> | undefined) ?? [],
-          new Date(),
-        ));
+        const now = new Date();
+        const ws = weekStartOf(now);
+        const lwFrom = new Date(ws); lwFrom.setDate(lwFrom.getDate() - 7);
+        const lwTo = new Date(ws); lwTo.setDate(lwTo.getDate() - 1);
+        const progress = allGoalProgress(now);
+        sendJson(res, 200, {
+          ...weeklyStats(
+            (lifeStore.get('todos') as Array<Record<string, unknown>> | undefined) ?? [],
+            (lifeStore.get('goals') as Array<Record<string, unknown>> | undefined) ?? [],
+            now,
+          ),
+          progress: progress.map((x) => ({ ...x, text: progressText(x) })),
+          spending: spendingWeek((lifeStore.get('transactions') as Array<Record<string, unknown>> | undefined) ?? [], now),
+          moods: journal.range(ymd(lwFrom), ymd(lwTo)),
+          nudge: nudge.stats(now.getTime()),
+        });
+        return;
+      }
+      if (p === '/api/goals/progress' && req.method === 'GET') {
+        sendJson(res, 200, { progress: allGoalProgress(new Date()) });
+        return;
+      }
+      // 晚间回顾：心情 + 一句话（同一天再答覆盖）
+      if (p === '/api/recap' && req.method === 'POST') {
+        const body = JSON.parse((await readBody(req, 4096)).toString('utf8')) as Record<string, unknown>;
+        const now = new Date();
+        const e = normalizeEntry(body, ymd(now), now.getTime());
+        if (!e) { sendJson(res, 400, { error: 'mood 必须是 good / ok / bad' }); return; }
+        await journal.add(e);
+        if (typeof body.nudgeId === 'string') await nudge.setOutcome(body.nudgeId, 'started');
+        sendJson(res, 200, { ok: true, entry: e });
         return;
       }
 
@@ -1206,6 +1304,17 @@ async function main(): Promise<void> {
         await nudge.snooze(new Date());
         broadcast({ type: 'nudge_snoozed' });
         sendJson(res, 200, { ok: true });
+        return;
+      }
+      if (p === '/api/nudge/outcome' && req.method === 'POST') {
+        const body = JSON.parse((await readBody(req, 1024)).toString('utf8')) as { id?: unknown; outcome?: unknown };
+        const oc = (['started', 'postponed', 'snoozed'] as const).find((x) => x === body.outcome);
+        if (typeof body.id !== 'string' || !oc) { sendJson(res, 400, { error: 'id / outcome 不对' }); return; }
+        sendJson(res, 200, { ok: await nudge.setOutcome(body.id, oc) });
+        return;
+      }
+      if (p === '/api/nudge/stats' && req.method === 'GET') {
+        sendJson(res, 200, nudge.stats(Date.now()));
         return;
       }
       if (p === '/api/nudge/test' && req.method === 'POST') {

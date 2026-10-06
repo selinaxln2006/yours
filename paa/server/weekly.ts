@@ -95,8 +95,35 @@ export function weeklyStats(todos: TodoLike[], goals: GoalLike[], now: Date, wee
 
 const WD = ['日', '一', '二', '三', '四', '五', '六'];
 
+export interface ScheduleLike { title?: string; date?: string; startTime?: string; rrule?: string; rruleDays?: number[]; rruleUntil?: string }
+
+/** 本地日程某天是否发生（和 console 的展开规则一致：daily / weekday / weekly(+rruleDays) / biweekly / monthly） */
+export function occursOn(ev: ScheduleLike, day: string): boolean {
+  if (!ev || typeof ev.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(ev.date)) return false;
+  const r = ev.rrule || 'none';
+  if (r === 'none') return ev.date === day;
+  if (day < ev.date || (ev.rruleUntil && day > ev.rruleUntil)) return false;
+  const d0 = new Date(ev.date + 'T00:00:00'), d = new Date(day + 'T00:00:00');
+  const diff = Math.round((d.getTime() - d0.getTime()) / 86_400_000);
+  const wd = d.getDay();
+  if (r === 'daily') return true;
+  if (r === 'weekday') return wd >= 1 && wd <= 5;
+  if (r === 'weekly') return ev.rruleDays && ev.rruleDays.length ? ev.rruleDays.includes(wd || 7) : diff % 7 === 0;
+  if (r === 'biweekly') return diff % 14 === 0;
+  if (r === 'monthly') return d.getDate() === d0.getDate();
+  return false;
+}
+
+/** 某天的本地日程 → ["09:00 组会", …]（按时间排） */
+export function scheduleLines(items: ScheduleLike[], day: string): string[] {
+  return items
+    .filter((e) => occursOn(e, day))
+    .sort((a, b) => (a.startTime || '').localeCompare(b.startTime || ''))
+    .map((e) => `${e.startTime ? e.startTime + ' ' : ''}${String(e.title ?? '').slice(0, 40)}`);
+}
+
 /** 每轮对话前注入的现状块：简短、事实性，不含历史流水 */
-export function buildContext(todos: TodoLike[], goals: GoalLike[], now: Date, extra: string[] = []): string {
+export function buildContext(todos: TodoLike[], goals: GoalLike[], now: Date, extra: string[] = [], progress: Map<string, string> = new Map()): string {
   const t = ymd(now);
   const hm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
   const due = todos.filter((x) => committed(x) && !x.done && (!x.dueDate || x.dueDate <= t));
@@ -114,7 +141,8 @@ export function buildContext(todos: TodoLike[], goals: GoalLike[], now: Date, ex
   if (st.goals.length) {
     lines.push('进行中的目标：');
     for (const g of st.goals.slice(0, 6)) {
-      lines.push(`- ${g.title}（id ${g.goalId}）：本周承诺 ${g.thisWeek.committed} 完成 ${g.thisWeek.done}，待采纳建议 ${g.thisWeek.suggested}；上周 ${g.lastWeek.done}/${g.lastWeek.committed}`);
+      const pt = progress.get(g.goalId);
+      lines.push(`- ${g.title}（id ${g.goalId}）：本周承诺 ${g.thisWeek.committed} 完成 ${g.thisWeek.done}，待采纳建议 ${g.thisWeek.suggested}；上周 ${g.lastWeek.done}/${g.lastWeek.committed}${pt ? `；${pt}` : ''}`);
     }
   }
   if (st.lastWeek.rate !== null) lines.push(`上周承诺完成率：${Math.round(st.lastWeek.rate * 100)}%（${st.lastWeek.done}/${st.lastWeek.committed}）`);

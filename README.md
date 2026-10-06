@@ -20,6 +20,7 @@ fonts/         控制台字体（本地打包，离线可用）
 - **零运行时依赖**：Node 直接运行 `.ts`（类型剥离），不需要构建；只有 `typescript` / `@types/node` 两个开发依赖。
 - **文件即数据**：记忆、产物、会话、生活数据都是 `paa/` 下的 JSON / JSONL 文件，全部在 `.gitignore` 里，不会进仓库。
 - **把目标落到每天**：和 Yours 聊目标，它拆成这周每天的「建议」；你挑今天要做的变成「承诺」；到家后还有没做完的，按你定的规则提醒（默认关闭，见 [docs/NUDGE-SETUP.md](docs/NUDGE-SETUP.md)）。产品思路见 [docs/PRD.md](docs/PRD.md)。
+- **它主动来找你，也会越用越准**：早间简报、晚间回顾；目标进度从体重 / 资产 / 打卡自动算，落后时直接说；每次提醒后有没有动手都会记下来，按时段告诉你哪种提醒有用。见 [docs/NUDGE-SETUP.md](docs/NUDGE-SETUP.md)。
 - **资产**：银行 / 定期 / 券商 / 钱包多账户、多币种，持仓每天自动估值，月度走势；IBKR 和 moomoo 可只读接入。见 [docs/ASSETS-SETUP.md](docs/ASSETS-SETUP.md)。
 - **MCP**：`config.json` 的 `mcpServers` 挂任意 MCP server，工具按它声明的只读/破坏性自动定风险等级。已适配 Google 日历，见 [docs/CALENDAR-SETUP.md](docs/CALENDAR-SETUP.md)。
 - **可选云同步**：登录 GitHub（Supabase 托管）后多设备同步生活数据，见 [docs/SUPABASE-SETUP.md](docs/SUPABASE-SETUP.md)。
