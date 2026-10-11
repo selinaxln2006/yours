@@ -43,8 +43,11 @@ paa/                        # PAA 大脑层（TS ESM，Node 24 直接跑 .ts，�
 ├── server/                 # 宿主 2：console server（127.0.0.1:18765）
 │   ├── main.ts             # HTTP 静态+REST+WS+chat
 │   ├── request-guard.ts    # 来源门禁（Origin/Host 校验、LAN 令牌）——改 server 路由别绕过它
-│   ├── nudge.ts            # 约束提醒：到家 / 晚间检查 / 对话回访；规则判断（纯函数）+ 定时 + 推送
-│   ├── weekly.ts           # 周复盘统计 + 每轮注入给模型的「现状」
+│   ├── nudge.ts            # 约束提醒：到家 / 晚间检查 / 对话回访 / 早间简报 / 晚间回顾；规则判断（纯函数）+ 定时 + 推送
+│   ├── nudge-log.ts        # 提醒效果记录：每次提醒的结果（做完 / 挪走 / 算了 / 没用）+ 按时段统计
+│   ├── goal-progress.ts    # 目标进度：从体重 / 资产总额 / 打卡 / 手动值算，带速度和预计到达；上周支出对比
+│   ├── journal.ts          # 晚间回顾的回答（心情 + 一句话）
+│   ├── weekly.ts           # 周复盘统计 + 每轮注入给模型的「现状」+ 本地日程按天展开
 │   ├── memory-extract.ts   # 每 3 轮对话后台整理长期记忆
 │   ├── confirm-edit.ts     # 确认卡改参数的校验（只改已有字段、类型不变）
 │   ├── assets.ts           # 资产：多账户多币种、汇率行情、估值、月度快照（data/assets.json）
